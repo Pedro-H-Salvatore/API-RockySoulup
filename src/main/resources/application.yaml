@@ -1,0 +1,71 @@
+spring:
+  config:
+    import: optional:file:./config/local-secrets.properties
+  application:
+    name: rockySoulup
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    driver-class-name: oracle.jdbc.OracleDriver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 1
+      connection-timeout: 5000
+  sql:
+    init:
+      mode: never
+  jdbc:
+    template:
+      query-timeout: 5s
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true
+  mvc:
+    log-request-details: false
+server:
+  forward-headers-strategy: none
+  max-http-request-header-size: 8KB
+  tomcat:
+    max-http-form-post-size: 16KB
+    max-swallow-size: 16KB
+    connection-timeout: 10s
+  error:
+    include-message: never
+    include-stacktrace: never
+    include-binding-errors: never
+app:
+  ai:
+    enabled: ${AI_ENABLED:false}
+    openai-key: ${OPENAI_API_KEY:}
+    hive-key: ${HIVE_API_KEY:}
+    model: gpt-6-luna
+    user-minute: ${AI_USER_MINUTE:2}
+    ip-minute: ${AI_IP_MINUTE:5}
+    global-minute: ${AI_GLOBAL_MINUTE:10}
+    user-daily: ${AI_USER_DAILY:10}
+    global-daily: ${AI_GLOBAL_DAILY:100}
+    concurrency: ${AI_CONCURRENCY:2}
+    pending-limit: ${AI_PENDING_LIMIT:100}
+    daily-micros: ${AI_DAILY_MICROS:2000000}
+    monthly-micros: ${AI_MONTHLY_MICROS:20000000}
+    user-daily-micros: ${AI_USER_DAILY_MICROS:500000}
+    openai-ceiling-micros: ${AI_OPENAI_CEILING_MICROS:100000}
+    hive-ceiling-micros: ${AI_HIVE_CEILING_MICROS:10000}
+    input-micros-per-million: ${AI_INPUT_MICROS_PER_MILLION:750000}
+    output-micros-per-million: ${AI_OUTPUT_MICROS_PER_MILLION:4500000}
+    retention-days: ${AI_RETENTION_DAYS:7}
+  security:
+    jwt-secret: ${JWT_SECRET}
+    issuer: ${JWT_ISSUER}
+    audience: ${JWT_AUDIENCE}
+    token-seconds: 300
+    allowed-origins: ${CORS_ALLOWED_ORIGINS}
+    require-https: ${REQUIRE_HTTPS:true}
+logging:
+  level:
+    org.springframework.jdbc: WARN
+    org.springframework.security: WARN
+    org.springframework.web: WARN
+    com.zaxxer.hikari: WARN
+
