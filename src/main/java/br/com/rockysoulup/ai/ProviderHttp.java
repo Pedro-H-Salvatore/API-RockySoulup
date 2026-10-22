@@ -1,6 +1,10 @@
 package br.com.rockysoulup.ai;
 
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import javax.net.ssl.*;
+import java.security.KeyStore;
 import java.net.URI;
 import java.net.http.*;
 import java.nio.ByteBuffer;
@@ -11,20 +15,38 @@ import java.util.concurrent.Flow;
 
 @Component
 public class ProviderHttp {
-    public static final URI OPENAI=URI.create("https://api.openai.com/v1/responses");
-    public static final URI HIVE=URI.create("https://api.thehive.ai/api/v3/hive/ai-generated-and-deepfake-content-detection");
+    public static final URI GEMINI=URI.create("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent");
+    private final boolean windowsTrustStore;
+    public ProviderHttp() { this(false); }
+    @Autowired
+    public ProviderHttp(@Value("${app.ai.windows-trust-store:false}") boolean windowsTrustStore) {
+        this.windowsTrustStore=windowsTrustStore;
+    }
     private static class ClientHolder {
         static final HttpClient CLIENT=HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5))
                 .followRedirects(HttpClient.Redirect.NEVER).build();
     }
+    private static class WindowsClientHolder {
+        static final HttpClient CLIENT=HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5))
+                .followRedirects(HttpClient.Redirect.NEVER).sslContext(windowsSslContext()).build();
+    }
+    static SSLContext windowsSslContext() {
+        try {
+            KeyStore store=KeyStore.getInstance("Windows-ROOT");store.load(null,null);
+            var managers=TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());managers.init(store);
+            var context=SSLContext.getInstance("TLS");context.init(null,managers.getTrustManagers(),null);
+            return context;
+        } catch(Exception e) { throw new IllegalStateException("Repositorio TLS do Windows indisponivel."); }
+    }
     public byte[] post(URI destination,String key,byte[] body) {
-        if(!Set.of(OPENAI,HIVE).contains(destination) || body.length>800000) throw new ProviderException("DESTINATION_BLOCKED");
+        if(!GEMINI.equals(destination) || body.length>800000) throw new ProviderException("DESTINATION_BLOCKED");
         CompletableFuture<HttpResponse<byte[]>> call=null;
         try {
             var request=HttpRequest.newBuilder(destination).timeout(Duration.ofSeconds(20))
-                    .header("Authorization","Bearer "+key).header("Content-Type","application/json")
+                    .header("x-goog-api-key",key).header("Content-Type","application/json")
                     .POST(HttpRequest.BodyPublishers.ofByteArray(body)).build();
-            call=ClientHolder.CLIENT.sendAsync(request, info -> new BoundedSubscriber());
+            var client=windowsTrustStore?WindowsClientHolder.CLIENT:ClientHolder.CLIENT;
+            call=client.sendAsync(request, info -> new BoundedSubscriber());
             var response=call.get(21,TimeUnit.SECONDS);
             if(response.statusCode()!=200) throw new ProviderException("HTTP_FAILURE");
             return response.body();

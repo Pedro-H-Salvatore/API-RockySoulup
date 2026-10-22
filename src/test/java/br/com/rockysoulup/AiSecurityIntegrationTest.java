@@ -35,7 +35,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @SpringBootTest(properties={"spring.datasource.url=jdbc:h2:mem:ai;MODE=Oracle;DB_CLOSE_DELAY=-1;LOCK_TIMEOUT=10000",
         "spring.sql.init.schema-locations=classpath:schema-test.sql,classpath:schema-ai.sql",
-        "app.ai.enabled=true","app.ai.openai-key=FAKE_OPENAI_TEST_ONLY","app.ai.hive-key=FAKE_HIVE_TEST_ONLY",
+        "app.ai.enabled=true","app.ai.gemini-key=FAKE_GEMINI_TEST_ONLY",
         "app.ai.user-minute=2","app.ai.ip-minute=3","app.ai.global-minute=6",
         "app.ai.user-daily=3","app.ai.global-daily=6","app.ai.daily-micros=330000",
         "app.ai.monthly-micros=440000","app.ai.user-daily-micros=220000","app.ai.pending-limit=8"})
@@ -76,7 +76,7 @@ class AiSecurityIntegrationTest {
         jdbc.update("INSERT INTO ACAO (ID_ACAO,NM_ACAO,NR_PONTOS) VALUES (701,'Reciclar',10)");
         var raster=new BufferedImage(64,64,BufferedImage.TYPE_INT_RGB); var output=new ByteArrayOutputStream(); ImageIO.write(raster,"png",output); image=Base64.getEncoder().encodeToString(output.toByteArray());
         reset(provider,transport);
-        when(provider.evaluate(any(),any())).thenAnswer(call->{ ((Runnable)call.getArgument(1)).run(); return new AiVerdict("COMPATIVEL",0.01,0.02,100,20,10000,"gpt-6-luna"); });
+        when(provider.evaluate(any(),any())).thenAnswer(call->{ ((Runnable)call.getArgument(1)).run(); return new AiVerdict("COMPATIVEL",100,20,10000,"gemini-3.5-flash-lite"); });
     }
     @AfterEach void cleanup() { SecurityContextHolder.clearContext(); }
     private String token(long user) {
@@ -116,7 +116,7 @@ class AiSecurityIntegrationTest {
         assertEquals(20,jdbc.queryForObject("SELECT NR_PONTOS FROM USUARIO WHERE ID_USUARIO = 101",Integer.class));
         assertEquals(0,count("HISTORICO"));
         String response=mvc.perform(get("/verificacoes/"+row.id()).header("Authorization",token(101))).andReturn().getResponse().getContentAsString();
-        for(String secret:List.of("FAKE_OPENAI_TEST_ONLY","FAKE_HIVE_TEST_ONLY",injected,image)) { assertFalse(response.contains(secret)); assertFalse(logs.getAll().contains(secret)); }
+        for(String secret:List.of("FAKE_GEMINI_TEST_ONLY",injected,image)) { assertFalse(response.contains(secret)); assertFalse(logs.getAll().contains(secret)); }
         assertFalse(row.toString().contains(injected));
     }
     @Test void clientCannotSetOwnerPointsModelOrUrl() throws Exception {
@@ -137,7 +137,7 @@ class AiSecurityIntegrationTest {
     }
     @Test void concurrentDuplicatePaysAtMostOnce() throws Exception {
         CountDownLatch entered=new CountDownLatch(1),release=new CountDownLatch(1);
-        doAnswer(call->{ ((Runnable)call.getArgument(1)).run(); entered.countDown(); assertTrue(release.await(5,TimeUnit.SECONDS)); return new AiVerdict("COMPATIVEL",0,0,100,20,10000,"gpt-6-luna"); }).when(provider).evaluate(any(),any());
+        doAnswer(call->{ ((Runnable)call.getArgument(1)).run(); entered.countDown(); assertTrue(release.await(5,TimeUnit.SECONDS)); return new AiVerdict("COMPATIVEL",100,20,10000,"gemini-3.5-flash-lite"); }).when(provider).evaluate(any(),any());
         try(var threads=Executors.newFixedThreadPool(2)) {
             var one=threads.submit(()->submit(101,"parallel_duplicate1","Reciclei"));
             assertTrue(entered.await(5,TimeUnit.SECONDS));
@@ -185,7 +185,7 @@ class AiSecurityIntegrationTest {
     @Test void expiredLeaseDoesNotRefundOrAcceptLateResult() {
         var operation=admission.submit(101,"127.0.0.1","expired_lease_0001",request("Um"),images.validate(image));
         clock.advance(121); control.maintain();
-        control.finish(operation,new AiVerdict("COMPATIVEL",0,0,100,20,10000,"gpt-6-luna"),null,1);
+        control.finish(operation,new AiVerdict("COMPATIVEL",100,20,10000,"gemini-3.5-flash-lite"),null,1);
         assertEquals("LEASE_EXPIRED",jdbc.queryForObject("SELECT DS_RESULTADO FROM AI_ATTEMPT",String.class));
         assertEquals(110000,admission.spend(clock.instant().minusSeconds(3600),null));
         assertEquals("PENDENTE_REVISAO",jdbc.queryForObject("SELECT DS_ESTADO FROM VERIFICACAO",String.class));
@@ -271,7 +271,7 @@ class AiSecurityIntegrationTest {
         assertEquals(1,count("AI_ATTEMPT"));
     }
     @Test void monthlyBudgetSurvivesDailyReset() throws Exception {
-        doAnswer(call->{((Runnable)call.getArgument(1)).run(); return new AiVerdict("INCONCLUSIVO",0,0,100,20,100000,"gpt-6-luna");}).when(provider).evaluate(any(),any());
+        doAnswer(call->{((Runnable)call.getArgument(1)).run(); return new AiVerdict("INCONCLUSIVO",100,20,100000,"gemini-3.5-flash-lite");}).when(provider).evaluate(any(),any());
         for(long user:List.of(101L,202L,404L)) submit(user,"monthly_budget_"+user,"Primeiro "+user);
         clock.advance(86400);
         submit(505,"monthly_budget_505","Segundo dia");
@@ -279,7 +279,7 @@ class AiSecurityIntegrationTest {
         assertEquals(4,count("AI_ATTEMPT"));
     }
     @Test void userFinancialBudgetBlocksBeforeDailyCount() throws Exception {
-        doAnswer(call->{((Runnable)call.getArgument(1)).run(); return new AiVerdict("INCONCLUSIVO",0,0,100,20,100000,"gpt-6-luna");}).when(provider).evaluate(any(),any());
+        doAnswer(call->{((Runnable)call.getArgument(1)).run(); return new AiVerdict("INCONCLUSIVO",100,20,100000,"gemini-3.5-flash-lite");}).when(provider).evaluate(any(),any());
         submit(101,"user_cost_budget01","Um"); submit(101,"user_cost_budget02","Dois"); clock.advance(61);
         mvc.perform(submission(101,"user_cost_budget03","Três","127.0.0.1")).andExpect(status().isTooManyRequests());
         assertEquals(2,count("AI_ATTEMPT"));

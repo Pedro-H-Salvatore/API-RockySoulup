@@ -15,7 +15,7 @@ import java.security.MessageDigest;
 
 @Service
 public class AiAdmissionBO {
-    public static final String RULES="sustentavel-review-v1";
+    public static final String RULES="sustentavel-gemini-v2";
     private final JdbcTemplate jdbc;
     private final VerificacaoDAO dao;
     private final AcaoDAO actions;
@@ -48,7 +48,7 @@ public class AiAdmissionBO {
         return reserve(row,ip);
     }
     private Admission reserve(VerificationRow row,String ip) {
-        if(!p.enabled() || p.openaiKey()==null || p.openaiKey().isBlank() || p.hiveKey()==null || p.hiveKey().isBlank()) throw new AiUnavailableException();
+        if(!p.enabled() || p.geminiKey()==null || p.geminiKey().isBlank()) throw new AiUnavailableException();
         Instant now=clock.instant();
         var control=jdbc.queryForMap("SELECT ST_SUSPENSO, DT_OPEN_UNTIL FROM AI_CONTROL WHERE ID_CONTROL = 1");
         if(((Number)control.get("ST_SUSPENSO")).intValue()==1) throw new AiUnavailableException();

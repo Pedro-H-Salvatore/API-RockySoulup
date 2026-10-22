@@ -1,15 +1,13 @@
 package br.com.rockysoulup.ai;
 
-public record AiVerdict(String parecer, double generated, double deepfake, int input, int output,
-                        long costMicros, String providerModel) {
+public record AiVerdict(String parecer, int input, int output, long costMicros, String providerModel) {
     public AiVerdict {
         if (!java.util.Set.of("COMPATIVEL","INCOMPATIVEL","INCONCLUSIVO").contains(parecer) ||
-                !Double.isFinite(generated) || generated<0 || generated>1 || !Double.isFinite(deepfake) || deepfake<0 || deepfake>1 ||
-                input<0 || input>8192 || output<0 || output>512 || costMicros<0 ||
-                providerModel==null || !providerModel.matches("gpt-6-luna(?:-[0-9-]{1,20})?")) throw new ProviderException("INVALID_RESPONSE");
+                input<1 || input>8192 || output<1 || output>512 || costMicros<0 ||
+                !validModel(providerModel)) throw new ProviderException("INVALID_RESPONSE");
     }
-    public String safeSummary() {
-        if(generated>=0.5 || deepfake>=0.5) return "SINAL_MANIPULACAO";
-        return parecer;
+    public static boolean validModel(String model) {
+        return model!=null && model.length()<=40 && model.matches("gemini-3\\.5-flash-lite(?:-[a-zA-Z0-9.-]{1,16})?");
     }
+    public String safeSummary() { return parecer; }
 }

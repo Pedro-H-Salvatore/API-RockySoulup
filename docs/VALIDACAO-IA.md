@@ -1,16 +1,21 @@
-# Validação da integração de IA
+# Validação da integração Gemini
 
-`mvn -o verify`, Java 25. Resultado: 97 testes aprovados; zero falhas, erros ou skips.
-
-H2 em memória, gateway/transporte simulados e chaves fictícias. Sem conexão Oracle ou chamadas pagas.
+Java 25, Maven offline verify: 102 testes aprovados; zero falhas, erros ou skips.
 
 | Suíte | Testes |
-|---|---:|
+| --- | ---: |
 | EvidenceValidatorTest | 2 |
-| ProviderSafetyTest | 17 |
+| ProviderSafetyTest | 22 |
 | AiSecurityIntegrationTest | 22 |
 | HttpGuardTest | 3 |
 | OfflineProvisionTest | 1 |
 | SecurityIntegrationTest | 52 |
 
-V003 validada estruturalmente em H2/Oracle mode; homologação Oracle real continua necessária.
+H2 em memória, chaves fictícias, gateway e transporte simulados. Nenhuma chamada
+de geração ou migração no Oracle real faz parte da suíte. As contas e os dados
+do banco local não são usados pelos testes.
+
+No Windows, a suite verifica a inicialização do contexto TLS com raízes do sistema.
+Uma consulta GET separada de metadados confirmou HTTP 200 e acesso da chave ao
+modelo, sem enviar imagens ou gerar conteúdo. Isso não valida disponibilidade
+de cota de geração nem precisão visual.

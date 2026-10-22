@@ -37,9 +37,9 @@ server:
 app:
   ai:
     enabled: ${AI_ENABLED:false}
-    openai-key: ${OPENAI_API_KEY:}
-    hive-key: ${HIVE_API_KEY:}
-    model: gpt-6-luna
+    gemini-key: ${GEMINI_API_KEY:}
+    windows-trust-store: ${AI_WINDOWS_TRUST_STORE:false}
+    model: gemini-3.5-flash-lite
     user-minute: ${AI_USER_MINUTE:2}
     ip-minute: ${AI_IP_MINUTE:5}
     global-minute: ${AI_GLOBAL_MINUTE:10}
@@ -50,10 +50,9 @@ app:
     daily-micros: ${AI_DAILY_MICROS:2000000}
     monthly-micros: ${AI_MONTHLY_MICROS:20000000}
     user-daily-micros: ${AI_USER_DAILY_MICROS:500000}
-    openai-ceiling-micros: ${AI_OPENAI_CEILING_MICROS:100000}
-    hive-ceiling-micros: ${AI_HIVE_CEILING_MICROS:10000}
-    input-micros-per-million: ${AI_INPUT_MICROS_PER_MILLION:750000}
-    output-micros-per-million: ${AI_OUTPUT_MICROS_PER_MILLION:4500000}
+    gemini-ceiling-micros: ${AI_GEMINI_CEILING_MICROS:110000}
+    input-micros-per-million: ${AI_INPUT_MICROS_PER_MILLION:0}
+    output-micros-per-million: ${AI_OUTPUT_MICROS_PER_MILLION:0}
     retention-days: ${AI_RETENTION_DAYS:7}
   security:
     jwt-secret: ${JWT_SECRET}

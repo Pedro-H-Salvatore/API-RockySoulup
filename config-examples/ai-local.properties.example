@@ -1,7 +1,6 @@
 # Referência somente. Não importar este arquivo com placeholders como segredos.
 # Acrescente as chaves ao arquivo PRIVADO config/local-secrets.properties.
-OPENAI_API_KEY=<sua_chave_openai>
-HIVE_API_KEY=<sua_chave_hive_v3>
+GEMINI_API_KEY=<backend_only_gemini_key>
 # Ativar somente após revisão/aplicação offline de V003 e conferência dos preços.
 AI_ENABLED=false
 AI_USER_MINUTE=2
@@ -14,9 +13,11 @@ AI_PENDING_LIMIT=100
 AI_DAILY_MICROS=2000000
 AI_MONTHLY_MICROS=20000000
 AI_USER_DAILY_MICROS=500000
-AI_OPENAI_CEILING_MICROS=100000
-AI_HIVE_CEILING_MICROS=10000
+AI_GEMINI_CEILING_MICROS=110000
 # Hipóteses de cálculo em micros USD / 1.000.000 tokens; conferir contrato atual.
-AI_INPUT_MICROS_PER_MILLION=750000
-AI_OUTPUT_MICROS_PER_MILLION=4500000
+AI_INPUT_MICROS_PER_MILLION=0
+AI_OUTPUT_MICROS_PER_MILLION=0
 AI_RETENTION_DAYS=7
+
+# Somente Windows: true usa as raizes confiaveis do sistema, sem ignorar TLS.
+AI_WINDOWS_TRUST_STORE=false
