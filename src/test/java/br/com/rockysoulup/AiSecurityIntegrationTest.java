@@ -69,7 +69,7 @@ class AiSecurityIntegrationTest {
     @BeforeEach void setup() throws Exception {
         SecurityContextHolder.clearContext();
         clock.now.set(Instant.parse("2026-10-15T12:00:00Z"));
-        for(String table:List.of("VERIFICACAO_AUDIT","VERIFICACAO_CREDITO","AI_ATTEMPT","VERIFICACAO","AI_RATE","AUTH_LOGIN_ATTEMPT","USUARIO_CARTA","USUARIO_FRAGMENTO","HISTORICO","CARTA","ACAO","SELO","RECOMPENSA","USUARIO")) jdbc.update("DELETE FROM "+table);
+        for(String table:List.of("CAPTURA_DESAFIO","VERIFICACAO_AUDIT","VERIFICACAO_CREDITO","AI_ATTEMPT","VERIFICACAO","AI_RATE","AUTH_LOGIN_ATTEMPT","USUARIO_CARTA","USUARIO_FRAGMENTO","HISTORICO","CARTA","ACAO","SELO","RECOMPENSA","USUARIO")) jdbc.update("DELETE FROM "+table);
         jdbc.update("UPDATE AI_CONTROL SET ST_SUSPENSO = 0, NR_FAILURES = 0, DT_OPEN_UNTIL = NULL WHERE ID_CONTROL = 1");
         for(long id:List.of(101L,202L,303L,404L,505L,606L,707L,808L,909L))
             jdbc.update("INSERT INTO USUARIO (ID_USUARIO,NM_USUARIO,DS_EMAIL,NR_PONTOS,DS_PERFIL,ST_ATIVO) VALUES (?,?,?,20,?,1)",id,"Teste "+id,id+"@test.invalid",id==303?"ADMIN":"USER");
@@ -88,10 +88,18 @@ class AiSecurityIntegrationTest {
         Jwt jwt=Jwt.withTokenValue("internal-test").header("alg","HS256").subject(Long.toString(user)).build();
         SecurityContextHolder.getContext().setAuthentication(new JwtAuthenticationToken(jwt,List.of(new SimpleGrantedAuthority(user==303?"ROLE_ADMIN":"ROLE_USER")),Long.toString(user)));
     }
-    private VerificacaoRequest request(String description) { return new VerificacaoRequest(701L,description,image); }
+    private VerificacaoRequest request(String description) { return request(101,description); }
+    private VerificacaoRequest request(long user,String description) {
+        String id=UUID.nameUUIDFromBytes((user+"|"+description).getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString();
+        if(jdbc.queryForObject("SELECT COUNT(*) FROM CAPTURA_DESAFIO WHERE ID_DESAFIO = ?",Long.class,id)==0) {
+            try { jdbc.update("INSERT INTO CAPTURA_DESAFIO (ID_DESAFIO,ID_USUARIO,ID_ACAO,DS_CODIGO,DS_IP_HASH,DT_CRIADO,DT_EXPIRA) VALUES (?,?,701,'TEST22','fixture',?,?)",id,user,java.sql.Timestamp.from(clock.instant()),java.sql.Timestamp.from(clock.instant().plusSeconds(300))); }
+            catch(org.springframework.dao.DuplicateKeyException ignored) {}
+        }
+        return new VerificacaoRequest(701L,description,image,id);
+    }
     private org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder submission(long user,String key,String description,String ip) {
         return post("/verificacoes").header("Authorization",token(user)).header("Idempotency-Key",key)
-                .with(r->{r.setRemoteAddr(ip);return r;}).contentType("application/json").content(json.writeValueAsString(request(description)));
+                .with(r->{r.setRemoteAddr(ip);return r;}).contentType("application/json").content(json.writeValueAsString(request(user,description)));
     }
     private VerificacaoResponse submit(long user,String key,String description) throws Exception {
         var result=mvc.perform(submission(user,key,description,"127.0.0.1")).andExpect(status().isAccepted()).andReturn();
@@ -183,7 +191,7 @@ class AiSecurityIntegrationTest {
         assertEquals(3,count("AI_ATTEMPT")); verify(provider,times(3)).evaluate(any(),any());
     }
     @Test void expiredLeaseDoesNotRefundOrAcceptLateResult() {
-        var operation=admission.submit(101,"127.0.0.1","expired_lease_0001",request("Um"),images.validate(image));
+        var operation=admission.submit(101,"127.0.0.1","expired_lease_0001",request(101,"Um"),images.validate(image));
         clock.advance(121); control.maintain();
         control.finish(operation,new AiVerdict("COMPATIVEL",100,20,10000,"gemini-3.5-flash-lite"),null,1);
         assertEquals("LEASE_EXPIRED",jdbc.queryForObject("SELECT DS_RESULTADO FROM AI_ATTEMPT",String.class));
@@ -202,7 +210,7 @@ class AiSecurityIntegrationTest {
             var ready=new CountDownLatch(1); var success=new AtomicInteger(); var denied=new AtomicInteger();
             List<Future<?>> calls=new ArrayList<>();
             for(long user:List.of(101L,202L,404L,505L,606L,707L)) calls.add(pool.submit(()->{try {
-                ready.await(); admission.submit(user,"192.0.2."+user,"budget_parallel_"+user,request("Ação "+user),evidence); success.incrementAndGet();
+                ready.await(); admission.submit(user,"192.0.2."+user,"budget_parallel_"+user,request(user,"Ação "+user),evidence); success.incrementAndGet();
             } catch(AiLimitException e) { denied.incrementAndGet(); } catch(InterruptedException e) { throw new RuntimeException(e); }}));
             ready.countDown(); for(var call:calls) call.get(10,TimeUnit.SECONDS);
             assertEquals(2,success.get()); assertEquals(4,denied.get()); assertEquals(220000,admission.spend(clock.instant().minusSeconds(3600),null));
@@ -213,7 +221,7 @@ class AiSecurityIntegrationTest {
         try(var pool=Executors.newFixedThreadPool(6)) {
             List<Future<?>> calls=new ArrayList<>();
             for(long user:List.of(101L,202L,404L,505L,606L,707L)) calls.add(pool.submit(()->{try {
-                admission.submit(user,"192.0.2."+user,"budget_second_"+user,request("Outra "+user),evidence); additional.incrementAndGet();
+                admission.submit(user,"192.0.2."+user,"budget_second_"+user,request(user,"Outra "+user),evidence); additional.incrementAndGet();
             } catch(AiLimitException ignored) {}}));
             for(var call:calls) call.get(10,TimeUnit.SECONDS);
         }
@@ -222,7 +230,7 @@ class AiSecurityIntegrationTest {
     }
     @Test void suspensionStopsDispatchAndIsAdminOnly() throws Exception {
         mvc.perform(post("/admin/ia/suspensao").header("Authorization",token(101)).contentType("application/json").content("{\"suspenso\":true}")).andExpect(status().isForbidden());
-        var operation=admission.submit(101,"127.0.0.1","suspend_dispatch01",request("Um"),images.validate(image));
+        var operation=admission.submit(101,"127.0.0.1","suspend_dispatch01",request(101,"Um"),images.validate(image));
         mvc.perform(post("/admin/ia/suspensao").header("Authorization",token(303)).contentType("application/json").content("{\"suspenso\":true}")).andExpect(status().isNoContent());
         assertThrows(ProviderException.class,()->control.beforeDispatch(operation.attemptId()));
         mvc.perform(submission(202,"suspend_dispatch02","Dois","127.0.0.1")).andExpect(status().isServiceUnavailable());
@@ -259,7 +267,7 @@ class AiSecurityIntegrationTest {
     @Test void largeAndInvalidImagesDoNotReachProvider() throws Exception {
         mvc.perform(post("/verificacoes").header("Authorization",token(101)).header("Idempotency-Key","huge_image_test01").contentType("application/json").content("x".repeat(720001))).andExpect(status().isPayloadTooLarge());
         for(String invalid:List.of("http://127.0.0.1/","data:image/png;base64,"+image,Base64.getEncoder().encodeToString(new byte[524289]),"bm90LWFuLWltYWdl")) {
-            var value=new VerificacaoRequest(701L,"Um",invalid);
+            var value=new VerificacaoRequest(701L,"Um",invalid,request("Um").desafioId());
             mvc.perform(post("/verificacoes").header("Authorization",token(101)).header("Idempotency-Key","invalid_image_0001").contentType("application/json").content(json.writeValueAsString(value))).andExpect(status().isBadRequest());
         }
         verifyNoInteractions(provider,transport);
@@ -290,4 +298,100 @@ class AiSecurityIntegrationTest {
         mvc.perform(submission(202,"pending_queue_002","Dois","127.0.0.1")).andExpect(status().isTooManyRequests());
         assertEquals(8,count("VERIFICACAO")); verify(provider,times(1)).evaluate(any(),any());
     }
+
+    private void automaticProvider(String verdict,String code) {
+        doAnswer(call->{((Runnable)call.getArgument(1)).run();return new AiVerdict(verdict,code,100,20,0,"gemini-3.5-flash-lite");}).when(provider).evaluate(any(),any());
+    }
+    private void freshImage(int seed) throws Exception {
+        var picture=new BufferedImage(96,96,BufferedImage.TYPE_INT_RGB);var random=new Random(seed);
+        for(int y=0;y<96;y++)for(int x=0;x<96;x++)picture.setRGB(x,y,random.nextInt(0x1000000));
+        var out=new ByteArrayOutputStream();ImageIO.write(picture,"png",out);image=Base64.getEncoder().encodeToString(out.toByteArray());
+    }
+    private DesafioResponse issue(long user,long action) throws Exception {
+        var result=mvc.perform(post("/verificacoes/desafio").header("Authorization",token(user)).contentType("application/json").content("{\"acaoId\":"+action+"}")).andExpect(status().isOk()).andReturn();
+        return json.readValue(result.getResponse().getContentAsString(),DesafioResponse.class);
+    }
+    @Test void challengeRequiresSessionAndIsBoundToActionWithFiveMinuteExpiry() throws Exception {
+        mvc.perform(post("/verificacoes/desafio").contentType("application/json").content("{\"acaoId\":701}")).andExpect(status().isUnauthorized());
+        var first=issue(101,701);assertEquals(701,first.acaoId());assertTrue(first.codigo().matches("[A-Z2-9]{6}"));assertEquals(clock.instant().plusSeconds(300),first.expiraEm());
+        assertEquals(first,issue(101,701));assertNotEquals(first.id(),issue(202,701).id());
+        mvc.perform(post("/verificacoes/desafio").header("Authorization",token(101)).contentType("application/json").content("{\"acaoId\":999}")).andExpect(status().isNotFound());
+        verifyNoInteractions(provider);
+    }
+    @Test void submissionsWithoutChallengeAreRejectedBeforeAnalysis() throws Exception {
+        var body=json.createObjectNode().put("acaoId",701).put("descricao","Foto").put("imagemBase64",image);
+        mvc.perform(post("/verificacoes").header("Authorization",token(101)).header("Idempotency-Key","missing_challenge01").contentType("application/json").content(json.writeValueAsString(body))).andExpect(status().isBadRequest());
+        verifyNoInteractions(provider);
+    }
+    @Test void foreignExpiredAndWrongActionChallengesCannotBeSubmitted() throws Exception {
+        var request=request(101,"Captura");
+        var body=json.writeValueAsString(request);
+        mvc.perform(post("/verificacoes").header("Authorization",token(202)).header("Idempotency-Key","foreign_challenge01").contentType("application/json").content(body)).andExpect(status().isNotFound());
+        jdbc.update("UPDATE CAPTURA_DESAFIO SET DT_CRIADO = ?, DT_EXPIRA = ? WHERE ID_DESAFIO = ?",java.sql.Timestamp.from(clock.instant().minusSeconds(600)),java.sql.Timestamp.from(clock.instant().minusSeconds(1)),request.desafioId());
+        mvc.perform(post("/verificacoes").header("Authorization",token(101)).header("Idempotency-Key","expired_challenge01").contentType("application/json").content(body)).andExpect(status().isConflict());
+        jdbc.update("INSERT INTO ACAO (ID_ACAO,NM_ACAO,NR_PONTOS) VALUES (702,'Outra',10)");
+        var other=new VerificacaoRequest(702L,"Captura",image,request.desafioId());
+        mvc.perform(post("/verificacoes").header("Authorization",token(101)).header("Idempotency-Key","wrong_action_test01").contentType("application/json").content(json.writeValueAsString(other))).andExpect(status().isConflict());
+        assertEquals(0,count("VERIFICACAO"));verifyNoInteractions(provider);
+    }
+    @Test void compatibleChallengeAutomaticallyCreditsOnceAndManualRetryCannotDoubleCredit() throws Exception {
+        automaticProvider("COMPATIVEL","TEST22");
+        var row=submit(101,"auto_credit_once01","Captura válida");assertEquals("APROVADA",row.estado());assertEquals(10,row.pontosCreditados());
+        assertEquals(30,jdbc.queryForObject("SELECT NR_PONTOS FROM USUARIO WHERE ID_USUARIO=101",Integer.class));
+        assertEquals(row.id(),submit(101,"auto_credit_once01","Captura válida").id());
+        mvc.perform(post("/admin/verificacoes/"+row.id()+"/revisao").header("Authorization",token(303)).contentType("application/json").content(json.writeValueAsString(new RevisaoRequest(true,"Conferido",row.versao())))).andExpect(status().isOk());
+        assertEquals(1,count("VERIFICACAO_CREDITO"));assertEquals(1,count("HISTORICO"));
+        assertEquals("AUTO_APPROVE",jdbc.queryForObject("SELECT DS_EVENTO FROM VERIFICACAO_AUDIT",String.class));verify(provider,times(1)).evaluate(any(),any());
+    }
+    @Test void concurrentAutomaticCompletionStillCreditsOnlyOnce() throws Exception {
+        var operation=admission.submit(101,"127.0.0.1","auto_finish_race01",request("Corrida"),images.validate(image));
+        var verdict=new AiVerdict("COMPATIVEL","TEST22",100,20,0,"gemini-3.5-flash-lite");
+        try(var pool=Executors.newFixedThreadPool(2)) {
+            var one=pool.submit(()->control.finish(operation,verdict,null,1));var two=pool.submit(()->control.finish(operation,verdict,null,1));one.get(5,TimeUnit.SECONDS);two.get(5,TimeUnit.SECONDS);
+        }
+        assertEquals(1,count("VERIFICACAO_CREDITO"));assertEquals(1,count("HISTORICO"));assertEquals(30,jdbc.queryForObject("SELECT NR_PONTOS FROM USUARIO WHERE ID_USUARIO=101",Integer.class));
+    }
+    @Test void unreadableOrWrongChallengeNeverAutoCredits() throws Exception {
+        automaticProvider("COMPATIVEL","NONE");var first=submit(101,"auto_no_code_0001","Sem código");assertEquals("PENDENTE_REVISAO",first.estado());assertEquals("DESAFIO_NAO_CONFIRMADO",first.parecer());
+        freshImage(25);automaticProvider("COMPATIVEL","WRNG22");var second=submit(202,"auto_bad_code_001","Código diferente");assertEquals("PENDENTE_REVISAO",second.estado());assertEquals(0,count("VERIFICACAO_CREDITO"));
+    }
+    @Test void compatibleReusedPhotoGoesToReviewAcrossUsers() throws Exception {
+        automaticProvider("COMPATIVEL","TEST22");assertEquals("APROVADA",submit(101,"auto_reuse_first01","Primeira").estado());
+        var second=submit(202,"auto_reuse_other01","Repetida");assertEquals("PENDENTE_REVISAO",second.estado());assertTrue(second.possivelReuso());assertEquals("CAPTURA_REPETIDA",second.parecer());assertEquals(1,count("VERIFICACAO_CREDITO"));
+    }
+    @Test void perceptuallySimilarButNotByteIdenticalPhotoGoesToReview() throws Exception {
+        automaticProvider("COMPATIVEL","TEST22");submit(101,"auto_visual_first1","Primeira");
+        var picture=new BufferedImage(64,64,BufferedImage.TYPE_INT_RGB);picture.setRGB(63,63,0x101010);var out=new ByteArrayOutputStream();ImageIO.write(picture,"png",out);image=Base64.getEncoder().encodeToString(out.toByteArray());
+        var other=submit(202,"auto_visual_other1","Parecida");assertTrue(other.possivelReuso());assertEquals("PENDENTE_REVISAO",other.estado());assertEquals(1,count("VERIFICACAO_CREDITO"));
+    }
+    @Test void incompatibleConfirmedCaptureRejectsWithoutPoints() throws Exception {
+        automaticProvider("INCOMPATIVEL","TEST22");var row=submit(101,"auto_reject_test01","Outra cena");assertEquals("REJEITADA",row.estado());assertEquals(0,row.pontosCreditados());assertEquals(0,count("HISTORICO"));
+    }
+    @Test void inconclusiveAndProviderFailureStayInReviewWithoutPoints() throws Exception {
+        automaticProvider("INCONCLUSIVO","TEST22");assertEquals("PENDENTE_REVISAO",submit(101,"auto_uncertain001","Incerta").estado());
+        doThrow(new ProviderException("HTTP_FAILURE")).when(provider).evaluate(any(),any());assertEquals("PENDENTE_REVISAO",submit(202,"auto_http_fail001","Falha").estado());assertEquals(0,count("VERIFICACAO_CREDITO"));
+    }
+    @Test void sameActionCanOnlyAutoCreditOncePerUtcDay() throws Exception {
+        automaticProvider("COMPATIVEL","TEST22");freshImage(11);assertEquals("APROVADA",submit(101,"auto_daily_first1","Primeira").estado());
+        freshImage(43);var other=submit(101,"auto_daily_other1","Outra foto");assertFalse(other.possivelReuso());assertEquals("PENDENTE_REVISAO",other.estado());assertEquals("LIMITE_AUTO",other.parecer());assertEquals(1,count("VERIFICACAO_CREDITO"));
+    }
+    @Test void dailyAutomaticPointsCeilingHoldsEvenForDifferentActions() throws Exception {
+        automaticProvider("COMPATIVEL","TEST22");jdbc.update("UPDATE ACAO SET NR_PONTOS=100 WHERE ID_ACAO=701");freshImage(21);assertEquals("APROVADA",submit(101,"auto_ceiling_first","Cem").estado());
+        jdbc.update("INSERT INTO ACAO (ID_ACAO,NM_ACAO,NR_PONTOS) VALUES (702,'Outra',10)");freshImage(72);
+        var capture=issue(101,702);automaticProvider("COMPATIVEL",capture.codigo());
+        var body=new VerificacaoRequest(702L,"Outra ação",image,capture.id());
+        var response=mvc.perform(post("/verificacoes").header("Authorization",token(101)).header("Idempotency-Key","auto_ceiling_other").contentType("application/json").content(json.writeValueAsString(body))).andExpect(status().isAccepted()).andReturn();
+        var result=json.readValue(response.getResponse().getContentAsString(),VerificacaoResponse.class);assertEquals("PENDENTE_REVISAO",result.estado());assertEquals("LIMITE_AUTO",result.parecer());assertEquals(1,count("VERIFICACAO_CREDITO"));assertEquals(120,jdbc.queryForObject("SELECT NR_PONTOS FROM USUARIO WHERE ID_USUARIO=101",Integer.class));
+    }
+    @Test void usedChallengeCannotAuthorizeANewImage() throws Exception {
+        var value=request("Uma");submit(101,"capture_used_first","Uma");freshImage(83);
+        var changed=new VerificacaoRequest(701L,"Uma",image,value.desafioId());
+        mvc.perform(post("/verificacoes").header("Authorization",token(101)).header("Idempotency-Key","capture_used_other").contentType("application/json").content(json.writeValueAsString(changed))).andExpect(status().isConflict());verify(provider,times(1)).evaluate(any(),any());
+    }
+    @Test void challengeCreationHasItsOwnServerSideRateLimit() throws Exception {
+        for(long action=702;action<=707;action++)jdbc.update("INSERT INTO ACAO (ID_ACAO,NM_ACAO,NR_PONTOS) VALUES (?, 'Teste',10)",action);
+        for(long action=701;action<=705;action++)issue(101,action);
+        mvc.perform(post("/verificacoes/desafio").header("Authorization",token(101)).contentType("application/json").content("{\"acaoId\":706}")).andExpect(status().isTooManyRequests());verifyNoInteractions(provider);
+    }
+
 }

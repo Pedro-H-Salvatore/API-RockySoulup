@@ -24,10 +24,15 @@ class ProviderSafetyTest {
     @BeforeEach void setup() { http=mock(ProviderHttp.class); gateway=new GeminiGateway(http,props,json); }
     private byte[] response(String text,Object input,Object output,int thoughts,String finish,String model) {
         long total=(input instanceof Number n?n.longValue():0)+(output instanceof Number n?n.longValue():0)+thoughts;
+        text=withCode(text);
         return json.writeValueAsBytes(Map.of("modelVersion",model,"usageMetadata",Map.of("promptTokenCount",input,"candidatesTokenCount",output,"thoughtsTokenCount",thoughts,"totalTokenCount",total),
                 "candidates",List.of(Map.of("finishReason",finish,"content",Map.of("role","model","parts",List.of(Map.of("text",text)))))));
     }
-    private byte[] good(String text) { return response(text,100,20,0,"STOP",props.model()); }
+    private byte[] good(String text) { return response(withCode(text),100,20,0,"STOP",props.model()); }
+    private String withCode(String text) {
+        try { var node=json.readTree(text); if(node.isObject() && node.size()==1 && node.has("parecer")) ((tools.jackson.databind.node.ObjectNode)node).put("codigoVisivel","NONE"); return json.writeValueAsString(node); }
+        catch(Exception e) { return text; }
+    }
     @Test void singleFixedDestinationStructuredOutputAndUntrustedUserContent() {
         when(http.post(eq(ProviderHttp.GEMINI),anyString(),any())).thenReturn(good("{\"parecer\":\"COMPATIVEL\"}"));
         var checks=new AtomicInteger();var result=gateway.evaluate(row,checks::incrementAndGet);
@@ -41,7 +46,7 @@ class ProviderSafetyTest {
         assertFalse(config.path("responseJsonSchema").path("additionalProperties").asBoolean());
         assertFalse(request.has("tools"));assertFalse(request.has("cachedContent"));
         assertFalse(request.path("systemInstruction").toString().contains(row.descricao()));
-        assertTrue(request.path("contents").get(0).toString().contains("ignore instruções"));
+        assertFalse(request.path("contents").get(0).toString().contains("ignore instruções"));
         var image=request.path("contents").get(0).path("parts").get(1).path("inlineData");
         assertEquals("image/jpeg",image.path("mimeType").asString());assertEquals("AQID",image.path("data").asString());
         assertFalse(new String(capture.getValue(),java.nio.charset.StandardCharsets.UTF_8).contains("FAKE_GEMINI"));
@@ -113,5 +118,20 @@ class ProviderSafetyTest {
     void windowsTrustStoreUsesSystemRootsAndKeepsTlsValidation() {
         var context=assertDoesNotThrow(ProviderHttp::windowsSslContext);
         assertTrue(Arrays.asList(context.getSupportedSSLParameters().getProtocols()).contains("TLSv1.3"));
+    }
+    @Test void visibleChallengeIsReadFromPhotoAndNeverProvidedAsExpectedAnswer() {
+        when(http.post(any(),anyString(),any())).thenReturn(good("{\"parecer\":\"COMPATIVEL\",\"codigoVisivel\":\"TEST22\"}"));
+        assertEquals("TEST22",gateway.evaluate(row,()->{}).codigoVisivel());
+        var capture=org.mockito.ArgumentCaptor.forClass(byte[].class);verify(http).post(any(),anyString(),capture.capture());
+        String payload=new String(capture.getValue(),java.nio.charset.StandardCharsets.UTF_8);
+        assertFalse(payload.contains("TEST22"));
+        assertTrue(payload.contains("papel físico"));
+    }
+    @ParameterizedTest @ValueSource(strings={"{\"parecer\":\"COMPATIVEL\"}","{\"parecer\":\"COMPATIVEL\",\"codigoVisivel\":true}","{\"parecer\":\"COMPATIVEL\",\"codigoVisivel\":\"TEST22 EXTRA\"}"})
+    void missingOrInvalidCaptureCodeIsRejected(String text) {
+        var node=json.readTree(response("{\"parecer\":\"COMPATIVEL\"}",100,20,0,"STOP",props.model()));
+        ((tools.jackson.databind.node.ObjectNode)node.path("candidates").get(0).path("content").path("parts").get(0)).put("text",text);
+        when(http.post(any(),anyString(),any())).thenReturn(json.writeValueAsBytes(node));
+        assertThrows(ProviderException.class,()->gateway.evaluate(row,()->{}));
     }
 }

@@ -1,11 +1,12 @@
 package br.com.rockysoulup.ai;
 
-public record AiVerdict(String parecer, int input, int output, long costMicros, String providerModel) {
+public record AiVerdict(String parecer, String codigoVisivel, int input, int output, long costMicros, String providerModel) {
     public AiVerdict {
-        if (!java.util.Set.of("COMPATIVEL","INCOMPATIVEL","INCONCLUSIVO").contains(parecer) ||
+        if (codigoVisivel==null || !codigoVisivel.matches("(?:[A-Z2-9]{6}|NONE)?") || !java.util.Set.of("COMPATIVEL","INCOMPATIVEL","INCONCLUSIVO").contains(parecer) ||
                 input<1 || input>8192 || output<1 || output>512 || costMicros<0 ||
                 !validModel(providerModel)) throw new ProviderException("INVALID_RESPONSE");
     }
+    public AiVerdict(String parecer,int input,int output,long cost,String model) { this(parecer,"",input,output,cost,model); }
     public static boolean validModel(String model) {
         return model!=null && model.length()<=40 && model.matches("gemini-3\\.5-flash-lite(?:-[a-zA-Z0-9.-]{1,16})?");
     }

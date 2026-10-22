@@ -103,7 +103,7 @@ public class SecurityConfig {
             .authorizeHttpRequests(routes -> routes
                 .requestMatchers(HttpMethod.POST,"/auth/login","/auth/cadastro").permitAll()
                 .requestMatchers(HttpMethod.POST,"/auth/logout").hasAnyRole("USER","ADMIN")
-                .requestMatchers(HttpMethod.POST,"/verificacoes").hasAnyRole("USER","ADMIN")
+                .requestMatchers(HttpMethod.POST,"/verificacoes","/verificacoes/desafio").hasAnyRole("USER","ADMIN")
                 .requestMatchers(HttpMethod.GET,"/verificacoes","/verificacoes/{id}","/verificacoes/{id}/evidencia").hasAnyRole("USER","ADMIN")
                 .requestMatchers(HttpMethod.DELETE,"/verificacoes/{id}/evidencia").hasAnyRole("USER","ADMIN")
                 .requestMatchers(HttpMethod.POST,"/admin/verificacoes/{id}/revisao","/admin/verificacoes/{id}/reprocessar","/admin/ia/suspensao").hasRole("ADMIN")

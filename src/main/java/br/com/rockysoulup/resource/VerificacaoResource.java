@@ -13,7 +13,10 @@ import java.util.*;
 public class VerificacaoResource {
     private final VerificacaoBO bo;
     private final AiControlBO control;
-    public VerificacaoResource(VerificacaoBO bo,AiControlBO control) { this.bo=bo; this.control=control; }
+    private final CapturaBO capture;
+    public VerificacaoResource(VerificacaoBO bo,AiControlBO control,CapturaBO capture) { this.bo=bo; this.control=control; this.capture=capture; }
+    @PostMapping("/verificacoes/desafio")
+    public DesafioResponse challenge(@Valid @RequestBody DesafioRequest value,HttpServletRequest request) { return capture.issue(value.acaoId(),request.getRemoteAddr()); }
     @PostMapping("/verificacoes")
     public ResponseEntity<VerificacaoResponse> submit(@Valid @RequestBody VerificacaoRequest value,@RequestHeader("Idempotency-Key") String key,HttpServletRequest request) {
         return ResponseEntity.accepted().body(bo.submit(value,key,request.getRemoteAddr()));

@@ -21,3 +21,6 @@ AI_RETENTION_DAYS=7
 
 # Somente Windows: true usa as raizes confiaveis do sistema, sem ignorar TLS.
 AI_WINDOWS_TRUST_STORE=false
+
+# false mantem toda decisao em revisao manual.
+AI_AUTO_APPROVAL_ENABLED=true

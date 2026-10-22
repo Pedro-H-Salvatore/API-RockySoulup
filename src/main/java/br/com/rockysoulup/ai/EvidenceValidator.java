@@ -12,6 +12,18 @@ import java.security.MessageDigest;
 @Component
 public class EvidenceValidator {
     private final java.util.concurrent.Semaphore decoders=new java.util.concurrent.Semaphore(2);
+    static String visualHash(BufferedImage image) {
+        var small=new BufferedImage(9,8,BufferedImage.TYPE_INT_RGB);
+        var graphics=small.createGraphics();graphics.drawImage(image,0,0,9,8,null);graphics.dispose();
+        long hash=0;int bit=0;
+        for(int y=0;y<8;y++) for(int x=0;x<8;x++) {
+            int a=small.getRGB(x,y),b=small.getRGB(x+1,y);
+            int left=((a>>16)&255)*299+((a>>8)&255)*587+(a&255)*114;
+            int right=((b>>16)&255)*299+((b>>8)&255)*587+(b&255)*114;
+            if(left>right) hash|=1L<<bit;bit++;
+        }
+        return String.format(java.util.Locale.ROOT,"%016x",hash);
+    }
     public Evidence validate(String base64) {
         if(!decoders.tryAcquire()) throw new AiLimitException();
         try {
@@ -40,7 +52,7 @@ public class EvidenceValidator {
                     ByteArrayOutputStream out=new ByteArrayOutputStream();
                     if(!ImageIO.write(normalized,"jpeg",out)) throw new IllegalArgumentException();
                     byte[] canonical=out.toByteArray();
-                    return new Evidence(canonical,HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(canonical)));
+                    return new Evidence(canonical,HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(canonical)),visualHash(normalized));
                 } finally { reader.dispose(); }
             }
         } catch(Exception e) { throw new IllegalArgumentException("Imagem inválida."); }

@@ -23,8 +23,9 @@ public class VerificacaoBO {
     private final HistoricoDAO history;
     private final JdbcTemplate jdbc;
     private final Clock clock;
-    public VerificacaoBO(AccessPolicy access,EvidenceValidator images,AiAdmissionBO admission,AiControlBO control,AiProviderGateway provider,VerificacaoDAO dao,HistoricoDAO history,JdbcTemplate jdbc,Clock clock) {
-        this.access=access; this.images=images; this.admission=admission; this.control=control; this.provider=provider; this.dao=dao; this.history=history; this.jdbc=jdbc; this.clock=clock;
+    private final VerificacaoDecisionBO decisions;
+    public VerificacaoBO(AccessPolicy access,EvidenceValidator images,AiAdmissionBO admission,AiControlBO control,AiProviderGateway provider,VerificacaoDAO dao,HistoricoDAO history,JdbcTemplate jdbc,Clock clock,VerificacaoDecisionBO decisions) {
+        this.access=access; this.images=images; this.admission=admission; this.control=control; this.provider=provider; this.dao=dao; this.history=history; this.jdbc=jdbc; this.clock=clock; this.decisions=decisions;
     }
     public VerificacaoResponse submit(VerificacaoRequest request,String key,String ip) {
         access.requireAuthenticated();
@@ -68,18 +69,11 @@ public class VerificacaoBO {
         access.requireAdmin(); admission.lock(); var row=dao.get(id,null,true);
         if(row.response().estado().equals(request.aprovar()?"APROVADA":"REJEITADA")) return row.response();
         if(row.response().versao()!=request.versao() || !row.response().estado().equals("PENDENTE_REVISAO") || (request.aprovar() && row.evidence()==null)) throw new ConflictException();
-        if(request.aprovar()) {
-            long user=row.response().usuarioId(); int points=row.pontos();
-            int updated=jdbc.update("UPDATE USUARIO SET NR_PONTOS = NR_PONTOS + ?, NR_VERSAO = NR_VERSAO + 1 WHERE ID_USUARIO = ? AND ST_ATIVO = 1 AND NR_PONTOS <= ?",points,user,Integer.MAX_VALUE-points);
-            if(updated!=1) throw new ConflictException();
-            var value=new HistoricoTO(); value.setUsuarioId(user); value.setDescricao("Verificação sustentável aprovada"); value.setPontos(points); value.setDataAcao(LocalDateTime.ofInstant(clock.instant(),ZoneOffset.UTC));
-            history.save(value);
-            jdbc.update("INSERT INTO VERIFICACAO_CREDITO (ID_VERIFICACAO,ID_USUARIO,ID_HISTORICO,NR_PONTOS,DT_CREDITO) VALUES (?,?,?,?,?)",id,user,value.getId(),points,Timestamp.from(clock.instant()));
-        }
-        jdbc.update("UPDATE VERIFICACAO SET DS_ESTADO = ?, NR_PONTOS_CREDITADOS = ?, NR_VERSAO = NR_VERSAO + 1 WHERE ID_VERIFICACAO = ?",request.aprovar()?"APROVADA":"REJEITADA",request.aprovar()?row.pontos():0,id);
-        audit(id,request.aprovar()?"MANUAL_APPROVE":"MANUAL_REJECT",request.justificativa());
-        return dao.get(id,null,false).response();
+        var result=decisions.decide(id,request.aprovar(),access.userId(),request.aprovar()?"MANUAL_APPROVE":"MANUAL_REJECT",request.justificativa());
+        access.audit(request.aprovar()?"MANUAL_APPROVE":"MANUAL_REJECT");
+        return result;
     }
+
     private void audit(String id,String event,String reason) {
         jdbc.update("INSERT INTO VERIFICACAO_AUDIT (ID_AUDIT,ID_VERIFICACAO,ID_ATOR,DS_EVENTO,DS_JUSTIFICATIVA,DT_EVENTO) VALUES (?,?,?,?,?,?)",UUID.randomUUID().toString(),id,access.userId(),event,reason,Timestamp.from(clock.instant()));
         access.audit(event);

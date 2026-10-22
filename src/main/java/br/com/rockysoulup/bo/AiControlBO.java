@@ -18,8 +18,12 @@ public class AiControlBO {
     private final AiProperties properties;
     private final AccessPolicy access;
     private final Clock clock;
-    public AiControlBO(JdbcTemplate jdbc,AiAdmissionBO admission,VerificacaoDAO dao,AiProperties properties,AccessPolicy access,Clock clock) {
-        this.jdbc=jdbc; this.admission=admission; this.dao=dao; this.properties=properties; this.access=access; this.clock=clock;
+    private final br.com.rockysoulup.dao.CapturaDAO captures;
+    private final VerificacaoDecisionBO decisions;
+    private final boolean automatic;
+    public AiControlBO(JdbcTemplate jdbc,AiAdmissionBO admission,VerificacaoDAO dao,AiProperties properties,AccessPolicy access,Clock clock,br.com.rockysoulup.dao.CapturaDAO captures,VerificacaoDecisionBO decisions,
+            @org.springframework.beans.factory.annotation.Value("${app.ai.automatic-enabled:true}") boolean automatic) {
+        this.jdbc=jdbc; this.admission=admission; this.dao=dao; this.properties=properties; this.access=access; this.clock=clock; this.captures=captures; this.decisions=decisions; this.automatic=automatic;
     }
     @Transactional
     public void beforeDispatch(String attempt) {
@@ -54,6 +58,17 @@ public class AiControlBO {
             if(jdbc.queryForObject("SELECT NR_FAILURES FROM AI_CONTROL WHERE ID_CONTROL = 1",Integer.class)>=3)
                 jdbc.update("UPDATE AI_CONTROL SET DT_OPEN_UNTIL = ? WHERE ID_CONTROL = 1",Timestamp.from(clock.instant().plusSeconds(60)));
         }
+        if(success && automatic && row.response().regras().equals(AiAdmissionBO.RULES) && row.response().tentativas()==1) {
+            String reason=null;
+            if(row.response().possivelReuso()) reason="CAPTURA_REPETIDA";
+            else if(!captures.matches(id,verdict.codigoVisivel())) reason="DESAFIO_NAO_CONFIRMADO";
+            else if(verdict.parecer().equals("INCONCLUSIVO")) reason="INCONCLUSIVO";
+            else if(verdict.costMicros()>properties.reservation()) reason="LIMITE_AUTO";
+            else if(verdict.parecer().equals("INCOMPATIVEL")) decisions.decide(id,false,0,"AUTO_REJECT","Foto incompatível com a ação e desafio confirmado.");
+            else if(!decisions.withinAutomaticLimits(row.response().usuarioId(),row.response().acaoId(),row.pontos())) reason="LIMITE_AUTO";
+            else decisions.decide(id,true,0,"AUTO_APPROVE","Compatibilidade e desafio confirmados; limites locais respeitados. Não é prova de autenticidade.");
+            if(reason!=null) jdbc.update("UPDATE VERIFICACAO SET DS_PARECER = ? WHERE ID_VERIFICACAO = ?",reason,id);
+        }
         org.slf4j.LoggerFactory.getLogger("security.events").info("event=AI_FINISH user={} operation={} duration_ms={} input={} output={} result={}",
                 row.response().usuarioId(),id,Math.max(0,duration),success?verdict.input():0,success?verdict.output():0,summary);
     }
@@ -85,5 +100,6 @@ public class AiControlBO {
         }
         jdbc.update("UPDATE VERIFICACAO SET BL_EVIDENCIA = NULL, DS_DESCRICAO = '[expirada]', NR_VERSAO = NR_VERSAO + 1 WHERE BL_EVIDENCIA IS NOT NULL AND DT_CRIADO < ? AND DS_ESTADO <> 'EM_ANALISE'",Timestamp.from(now.minus(Duration.ofDays(properties.retentionDays()))));
         jdbc.update("DELETE FROM AI_RATE WHERE NR_WINDOW < ?",now.getEpochSecond()/60-1);
+        jdbc.update("DELETE FROM CAPTURA_DESAFIO WHERE ID_VERIFICACAO IS NULL AND DT_EXPIRA < ?",Timestamp.from(now.minus(Duration.ofDays(7))));
     }
 }

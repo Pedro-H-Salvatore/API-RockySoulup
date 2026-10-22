@@ -1,12 +1,12 @@
 # Validação da integração Gemini
 
-Java 25, Maven offline verify: 102 testes aprovados; zero falhas, erros ou skips.
+Java 25, Maven offline verify: 120 testes aprovados; zero falhas, erros ou skips.
 
 | Suíte | Testes |
 | --- | ---: |
 | EvidenceValidatorTest | 2 |
-| ProviderSafetyTest | 22 |
-| AiSecurityIntegrationTest | 22 |
+| ProviderSafetyTest | 26 |
+| AiSecurityIntegrationTest | 36 |
 | HttpGuardTest | 3 |
 | OfflineProvisionTest | 1 |
 | SecurityIntegrationTest | 52 |
@@ -19,3 +19,7 @@ No Windows, a suite verifica a inicialização do contexto TLS com raízes do si
 Uma consulta GET separada de metadados confirmou HTTP 200 e acesso da chave ao
 modelo, sem enviar imagens ou gerar conteúdo. Isso não valida disponibilidade
 de cota de geração nem precisão visual.
+
+Adicionados cenários de desafio, câmera, expiração, replay, hash visual, decisão
+automática, limites diários, concorrência e crédito único. Sete cenários do Chrome
+usam câmera sintética e API simulada. Nenhum envio real ao Gemini.

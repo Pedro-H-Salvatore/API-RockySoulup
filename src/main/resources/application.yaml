@@ -37,6 +37,7 @@ server:
 app:
   ai:
     enabled: ${AI_ENABLED:false}
+    automatic-enabled: ${AI_AUTO_APPROVAL_ENABLED:true}
     gemini-key: ${GEMINI_API_KEY:}
     windows-trust-store: ${AI_WINDOWS_TRUST_STORE:false}
     model: gemini-3.5-flash-lite

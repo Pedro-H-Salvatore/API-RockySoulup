@@ -15,18 +15,19 @@ import java.security.MessageDigest;
 
 @Service
 public class AiAdmissionBO {
-    public static final String RULES="sustentavel-gemini-v2";
+    public static final String RULES="sustentavel-capture-v3";
     private final JdbcTemplate jdbc;
     private final VerificacaoDAO dao;
     private final AcaoDAO actions;
     private final AiProperties p;
     private final Clock clock;
-    public AiAdmissionBO(JdbcTemplate jdbc,VerificacaoDAO dao,AcaoDAO actions,AiProperties p,Clock clock) { this.jdbc=jdbc; this.dao=dao; this.actions=actions; this.p=p; this.clock=clock; }
+    private final CapturaDAO captures;
+    public AiAdmissionBO(JdbcTemplate jdbc,VerificacaoDAO dao,AcaoDAO actions,AiProperties p,Clock clock,CapturaDAO captures) { this.jdbc=jdbc; this.dao=dao; this.actions=actions; this.p=p; this.clock=clock; this.captures=captures; }
     public void lock() { jdbc.queryForObject("SELECT ID_CONTROL FROM AI_CONTROL WHERE ID_CONTROL = 1 FOR UPDATE",Integer.class); }
     @Transactional
     public Admission submit(long user,String ip,String key,VerificacaoRequest request,Evidence evidence) {
         lock();
-        String fingerprint=digest(request.acaoId()+"\n"+request.descricao().strip()+"\n"+evidence.hash()+"\n"+p.model()+"\n"+RULES);
+        String fingerprint=digest(request.acaoId()+"\n"+request.descricao().strip()+"\n"+request.desafioId()+"\n"+evidence.hash()+"\n"+p.model()+"\n"+RULES);
         var existing=dao.existing(user,key,fingerprint);
         if(existing.isPresent()) {
             if(!existing.get().fingerprint().equals(fingerprint)) throw new ConflictException();
@@ -34,11 +35,13 @@ public class AiAdmissionBO {
         }
         if(jdbc.queryForObject("SELECT COUNT(*) FROM VERIFICACAO WHERE DS_ESTADO IN ('ENVIADA','EM_ANALISE','PENDENTE_REVISAO')",Long.class)>=p.pendingLimit() ||
                 jdbc.queryForObject("SELECT COUNT(*) FROM VERIFICACAO WHERE ID_USUARIO = ? AND DS_ESTADO IN ('ENVIADA','EM_ANALISE','PENDENTE_REVISAO')",Long.class,user)>=5) throw new AiLimitException();
+        captures.validate(request.desafioId(),user,request.acaoId(),clock.instant());
         var action=actions.findAllById(request.acaoId(),null);
         String id=UUID.randomUUID().toString();
-        boolean reused=jdbc.queryForObject("SELECT COUNT(*) FROM VERIFICACAO WHERE DS_HASH = ?",Long.class,evidence.hash())>0;
+        boolean reused=jdbc.queryForObject("SELECT COUNT(*) FROM VERIFICACAO WHERE DS_HASH = ?",Long.class,evidence.hash())>0 || captures.similar(evidence.visualHash(),clock.instant().minus(Duration.ofDays(30)));
         jdbc.update("INSERT INTO VERIFICACAO (ID_VERIFICACAO,ID_USUARIO,ID_ACAO,DS_IDEMPOTENCY,DS_FINGERPRINT,DS_HASH,DS_DESCRICAO,BL_EVIDENCIA,DT_CRIADO,NM_ACAO,NR_PONTOS,DS_MODELO,DS_REGRAS,DS_ESTADO,ST_REUSO) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'ENVIADA',?)",
                 id,user,request.acaoId(),key,fingerprint,evidence.hash(),request.descricao().strip(),evidence.jpeg(),Timestamp.from(clock.instant()),action.getNome(),action.getPontos(),p.model(),RULES,reused?1:0);
+        captures.consume(request.desafioId(),user,id,evidence.visualHash(),clock.instant());
         return reserve(dao.get(id,null,true),ip);
     }
     @Transactional
