@@ -1,0 +1,17 @@
+server:
+  address: 0.0.0.0
+  port: ${PORT:10000}
+  forward-headers-strategy: native
+spring:
+  datasource:
+    hikari:
+      maximum-pool-size: 5
+      minimum-idle: 0
+      connection-timeout: 2000
+app:
+  ai:
+    windows-trust-store: false
+    automatic-enabled: ${AI_AUTO_APPROVAL_ENABLED:false}
+  security:
+    issuer: ${JWT_ISSUER:${RENDER_EXTERNAL_URL}}
+    require-https: true
