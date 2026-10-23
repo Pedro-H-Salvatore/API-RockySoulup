@@ -18,7 +18,8 @@ public class HttpGuard extends OncePerRequestFilter {
     @Override protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain) throws ServletException, IOException {
         response.setHeader("Cache-Control", "no-store");
         int maxBody = request.getMethod().equals("POST") && request.getRequestURI().equals("/verificacoes") ? 720000 : MAX_BODY;
-        if (properties.requireHttps() && !request.isSecure()) { SecurityJson.write(response,403,"HTTPS obrigatório."); return; }
+        boolean healthProbe = request.getMethod().equals("GET") && request.getRequestURI().equals("/health");
+        if (properties.requireHttps() && !request.isSecure() && !healthProbe) { SecurityJson.write(response,403,"HTTPS obrigatório."); return; }
         if (request.getContentLengthLong() > maxBody) { SecurityJson.write(response,413,"Corpo da requisição excede o limite."); return; }
         byte[] bytes = request.getInputStream().readNBytes(maxBody + 1);
         if (bytes.length > maxBody) { SecurityJson.write(response,413,"Corpo da requisição excede o limite."); return; }
