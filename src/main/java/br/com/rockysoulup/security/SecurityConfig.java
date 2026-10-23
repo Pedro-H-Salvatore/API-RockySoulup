@@ -101,6 +101,7 @@ public class SecurityConfig {
             .requestCache(cache -> cache.disable())
             .formLogin(form -> form.disable()).httpBasic(basic -> basic.disable()).logout(logout -> logout.disable())
             .authorizeHttpRequests(routes -> routes
+                .requestMatchers(HttpMethod.GET,"/health").permitAll()
                 .requestMatchers(HttpMethod.POST,"/auth/login","/auth/cadastro").permitAll()
                 .requestMatchers(HttpMethod.POST,"/auth/logout").hasAnyRole("USER","ADMIN")
                 .requestMatchers(HttpMethod.POST,"/verificacoes","/verificacoes/desafio").hasAnyRole("USER","ADMIN")
