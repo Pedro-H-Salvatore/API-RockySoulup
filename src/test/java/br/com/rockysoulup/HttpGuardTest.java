@@ -19,6 +19,15 @@ class HttpGuardTest {
         assertEquals(403,response.getStatus()); assertFalse(reached.get());
         assertTrue(response.getContentType().startsWith("application/json"));
     }
+    @Test void onlyExactHealthGetAllowsInternalHttpProbe() throws Exception {
+        for (String[] route : List.of(new String[]{"GET","/health"},new String[]{"POST","/health"},new String[]{"GET","/health/"},new String[]{"GET","/acao"})) {
+            var request=new MockHttpServletRequest(route[0],route[1]);
+            var response=new MockHttpServletResponse();
+            AtomicBoolean reached=new AtomicBoolean();
+            new HttpGuard(properties(true)).doFilter(request,response,(req,res)->reached.set(true));
+            assertEquals(route[0].equals("GET") && route[1].equals("/health"),reached.get());
+        }
+    }
     @Test void bodiesWithoutContentLengthAreBounded() throws Exception {
         var request=new MockHttpServletRequest("POST","/auth/login") {
             @Override public long getContentLengthLong() { return -1; }
