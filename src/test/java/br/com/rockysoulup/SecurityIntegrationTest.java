@@ -66,6 +66,11 @@ class SecurityIntegrationTest {
         b=token(202,0,Instant.now(),300,"https://test.invalid","security-tests");
         admin=token(303,0,Instant.now(),300,"https://test.invalid","security-tests");
     }
+    @Test void healthIsPublicAndExposesOnlyDatabaseStatus() throws Exception {
+        mvc.perform(get("/health")).andExpect(status().isOk())
+            .andExpect(content().json("{\"status\":\"UP\"}"));
+        mvc.perform(post("/health")).andExpect(status().isUnauthorized());
+    }
     @AfterEach void cleanup() { SecurityContextHolder.clearContext(); }
     private String token(long id,long version,Instant issued,long duration,String issuer,String audience) {
         JwtClaimsSet claims=JwtClaimsSet.builder().issuer(issuer).subject(Long.toString(id)).audience(List.of(audience))
