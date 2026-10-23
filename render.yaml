@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: rockysoulup-api
+    runtime: docker
+    plan: free
+    branch: main
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeployTrigger: off
+    envVars:
+      - key: SPRING_PROFILES_ACTIVE
+        value: render
+      - key: DB_URL
+        sync: false
+      - key: DB_USERNAME
+        sync: false
+      - key: DB_PASSWORD
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_AUDIENCE
+        value: rockysoulup-web
+      - key: CORS_ALLOWED_ORIGINS
+        value: http://localhost:5173,http://127.0.0.1:5173
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: AI_ENABLED
+        value: true
+      - key: AI_AUTO_APPROVAL_ENABLED
+        value: false
