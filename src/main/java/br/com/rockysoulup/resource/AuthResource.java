@@ -18,6 +18,8 @@ public class AuthResource {
     }
     @PostMapping("/login")
     public TokenResponse login(@Valid @RequestBody LoginRequest request, HttpServletRequest servlet) { return bo.login(request,servlet.getRemoteAddr()); }
+    @GetMapping("/sessao")
+    public SessaoResponse sessao() { return bo.sessao(); }
     @PostMapping("/logout")
     public ResponseEntity<Void> logout() { bo.logout(); return ResponseEntity.noContent().build(); }
 }
