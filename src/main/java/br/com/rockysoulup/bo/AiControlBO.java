@@ -44,7 +44,8 @@ public class AiControlBO {
         if(!Set.of("COMPATIVEL","INCOMPATIVEL","INCONCLUSIVO","SINAL_MANIPULACAO","HTTP_FAILURE","TIMEOUT_OR_NETWORK","INTERRUPTED","INVALID_RESPONSE","INVALID_USAGE","DISPATCH_BLOCKED","RESPONSE_TOO_LARGE","DESTINATION_BLOCKED").contains(summary)) summary="INVALID_RESPONSE";
         jdbc.update("UPDATE AI_ATTEMPT SET ST_ATIVO = 0, ST_INCERTO = ?, NR_CUSTO = ?, DS_RESULTADO = ?, NR_INPUT = ?, NR_OUTPUT = ?, NR_DURATION = ? WHERE ID_ATTEMPT = ?",
                 success?0:1,success?verdict.costMicros():null,summary,success?verdict.input():0,success?verdict.output():0,Math.max(0,duration),operation.attemptId());
-        jdbc.update("UPDATE VERIFICACAO SET DS_ESTADO = 'PENDENTE_REVISAO', DS_PARECER = ?, NR_VERSAO = NR_VERSAO + 1 WHERE ID_VERIFICACAO = ?",summary,id);
+        jdbc.update("UPDATE VERIFICACAO SET DS_ESTADO = 'PENDENTE_REVISAO', DS_PARECER = ?, NR_NOTA_COMPATIBILIDADE = ?, DS_FEEDBACK_IA = ?, ST_EVIDENCIA_INSUFICIENTE = ?, ST_SUSPEITA_MANIPULACAO = ?, NR_VERSAO = NR_VERSAO + 1 WHERE ID_VERIFICACAO = ?",
+                summary,success?verdict.notaCompatibilidade():null,success?verdict.feedback():null,success?(verdict.evidenciaInsuficiente()?1:0):null,success?(verdict.suspeitaManipulacao()?1:0):null,id);
         if(success) {
             jdbc.update("UPDATE AI_CONTROL SET NR_FAILURES = 0, DT_OPEN_UNTIL = NULL WHERE ID_CONTROL = 1");
             jdbc.update("UPDATE VERIFICACAO SET DS_MODELO = ? WHERE ID_VERIFICACAO = ?",verdict.providerModel(),id);
@@ -60,13 +61,21 @@ public class AiControlBO {
         }
         if(success && automatic && row.response().regras().equals(AiAdmissionBO.RULES) && row.response().tentativas()==1) {
             String reason=null;
-            if(row.response().possivelReuso()) reason="CAPTURA_REPETIDA";
+            if(row.evidence()==null) reason="EVIDENCIA_INSUFICIENTE";
+            else if(row.response().possivelReuso()) reason="CAPTURA_REPETIDA";
             else if(!captures.matches(id,verdict.codigoVisivel())) reason="DESAFIO_NAO_CONFIRMADO";
+            else if(verdict.suspeitaManipulacao()) reason="SINAL_MANIPULACAO";
+            else if(verdict.evidenciaInsuficiente()) reason="EVIDENCIA_INSUFICIENTE";
             else if(verdict.parecer().equals("INCONCLUSIVO")) reason="INCONCLUSIVO";
             else if(verdict.costMicros()>properties.reservation()) reason="LIMITE_AUTO";
-            else if(verdict.parecer().equals("INCOMPATIVEL")) decisions.decide(id,false,0,"AUTO_REJECT","Foto incompatível com a ação e desafio confirmado.");
-            else if(!decisions.withinAutomaticLimits(row.response().usuarioId(),row.response().acaoId(),row.pontos())) reason="LIMITE_AUTO";
-            else decisions.decide(id,true,0,"AUTO_APPROVE","Compatibilidade e desafio confirmados; limites locais respeitados. Não é prova de autenticidade.");
+            else if(verdict.notaCompatibilidade()==null) reason="NOTA_INDISPONIVEL";
+            else if(verdict.notaCompatibilidade()<50 && verdict.parecer().equals("INCOMPATIVEL"))
+                decisions.decide(id,false,0,"AUTO_REJECT","Compatibilidade abaixo de 50/100 e imagem incompatível; desafio confirmado.");
+            else if(verdict.notaCompatibilidade()<=80 && verdict.notaCompatibilidade()>=50) reason="FAIXA_REVISAO";
+            else if(verdict.notaCompatibilidade()>80 && verdict.parecer().equals("COMPATIVEL")) {
+                if(!decisions.withinAutomaticLimits(row.response().usuarioId(),row.response().acaoId(),row.pontos())) reason="LIMITE_AUTO";
+                else decisions.decide(id,true,0,"AUTO_APPROVE","Compatibilidade acima de 80/100, desafio confirmado e limites respeitados. Não é prova de autenticidade.");
+            } else reason="DADOS_DIVERGENTES";
             if(reason!=null) jdbc.update("UPDATE VERIFICACAO SET DS_PARECER = ? WHERE ID_VERIFICACAO = ?",reason,id);
         }
         org.slf4j.LoggerFactory.getLogger("security.events").info("event=AI_FINISH user={} operation={} duration_ms={} input={} output={} result={}",
@@ -84,7 +93,7 @@ public class AiControlBO {
         Instant now=clock.instant();
         var day=now.atZone(ZoneOffset.UTC).toLocalDate().atStartOfDay(ZoneOffset.UTC).toInstant();
         var month=now.atZone(ZoneOffset.UTC).withDayOfMonth(1).toLocalDate().atStartOfDay(ZoneOffset.UTC).toInstant();
-        return Map.of("habilitado",properties.enabled(),"suspenso",jdbc.queryForObject("SELECT ST_SUSPENSO FROM AI_CONTROL WHERE ID_CONTROL = 1",Integer.class)==1,
+        return Map.of("habilitado",properties.enabled(),"decisaoAutomatica",automatic,"regras",AiAdmissionBO.RULES,"suspenso",jdbc.queryForObject("SELECT ST_SUSPENSO FROM AI_CONTROL WHERE ID_CONTROL = 1",Integer.class)==1,
                 "consumoOuReservaDiaMicrosUSD",admission.spend(day,null),"limiteDiaMicrosUSD",properties.dailyMicros(),
                 "consumoOuReservaMesMicrosUSD",admission.spend(month,null),"limiteMesMicrosUSD",properties.monthlyMicros(),
                 "reservasIncertas",jdbc.queryForObject("SELECT COUNT(*) FROM AI_ATTEMPT WHERE ST_INCERTO = 1",Long.class));
