@@ -1060,3 +1060,17 @@ Os testes de captura usam câmera sintética e API simulada. Os testes de decis�
 usam H2 e gateway simulado; não comprovam precisão real do Gemini. Nenhuma imagem
 real foi enviada ao provedor nesta implementação. Fotos de demonstração devem
 evitar pessoas identificáveis e dados pessoais, conforme as condições da cota gratuita.
+
+
+## Avaliação automática por nota de compatibilidade (v4)
+
+O fluxo atual usa nota de compatibilidade visual de 0 a 100, sem apresentá-la como
+probabilidade de autenticidade. Abaixo de 50 e claramente incompatível: rejeição
+automática. Entre 50 e 80, inclusive: revisão. Acima de 80 e com todas as verificações
+obrigatórias atendidas: aprovação e crédito único. Falhas, suspeitas, imagens
+reutilizadas e desafios não confirmados permanecem para revisão, sem pontos.
+As notas e justificativas aparecem nos detalhes das verificações.
+
+Esta seção substitui a configuração inicial de hospedagem com aprovação desligada.
+Configurar `AI_AUTO_APPROVAL_ENABLED=true` e aplicar V007 antes de publicar.
+Veja [regras e implantação da avaliação automática](docs/AVALIACAO-AUTOMATICA.md).
