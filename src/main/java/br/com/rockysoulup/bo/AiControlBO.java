@@ -32,7 +32,7 @@ public class AiControlBO {
         int suspended=((Number)state.get("ST_SUSPENSO")).intValue();
         Timestamp open=(Timestamp)state.get("DT_OPEN_UNTIL");
         if(open!=null && open.toInstant().isAfter(clock.instant())) throw new ProviderException("DISPATCH_BLOCKED");
-        if(!properties.enabled() || suspended==1 || jdbc.queryForObject("SELECT COUNT(*) FROM AI_ATTEMPT WHERE ID_ATTEMPT = ? AND ST_ATIVO = 1 AND DT_LEASE > ?",Long.class,attempt,Timestamp.from(clock.instant()))!=1) throw new ProviderException("DISPATCH_BLOCKED");
+        if(admission.manualOnly() || !properties.enabled() || suspended==1 || jdbc.queryForObject("SELECT COUNT(*) FROM AI_ATTEMPT WHERE ID_ATTEMPT = ? AND ST_ATIVO = 1 AND DT_LEASE > ?",Long.class,attempt,Timestamp.from(clock.instant()))!=1) throw new ProviderException("DISPATCH_BLOCKED");
     }
     @Transactional
     public void finish(Admission operation,AiVerdict verdict,String failure,long duration) {
@@ -60,7 +60,7 @@ public class AiControlBO {
             if(jdbc.queryForObject("SELECT NR_FAILURES FROM AI_CONTROL WHERE ID_CONTROL = 1",Integer.class)>=3)
                 jdbc.update("UPDATE AI_CONTROL SET DT_OPEN_UNTIL = ? WHERE ID_CONTROL = 1",Timestamp.from(clock.instant().plusSeconds(60)));
         }
-        if(success && automatic && row.response().regras().equals(AiAdmissionBO.RULES) && row.response().tentativas()==1) {
+        if(success && automatic && !admission.manualOnly() && jdbc.queryForObject("SELECT ST_SUSPENSO FROM AI_CONTROL WHERE ID_CONTROL = 1",Integer.class)==0 && row.response().regras().equals(AiAdmissionBO.RULES) && row.response().tentativas()==1) {
             String reason=null;
             if(row.evidence()==null) reason="EVIDENCIA_INSUFICIENTE";
             else if(verdict.suspeitaManipulacao()) reason="SINAL_MANIPULACAO";
@@ -95,7 +95,7 @@ public class AiControlBO {
         var day=now.atZone(ZoneOffset.UTC).toLocalDate().atStartOfDay(ZoneOffset.UTC).toInstant();
         var month=now.atZone(ZoneOffset.UTC).withDayOfMonth(1).toLocalDate().atStartOfDay(ZoneOffset.UTC).toInstant();
         var usage=admission.snapshot(day,month,-1);
-        return Map.of("habilitado",properties.enabled(),"decisaoAutomatica",automatic,"regras",AiAdmissionBO.RULES,"suspenso",jdbc.queryForObject("SELECT ST_SUSPENSO FROM AI_CONTROL WHERE ID_CONTROL = 1",Integer.class)==1,
+        return Map.of("habilitado",properties.enabled() && !admission.manualOnly(),"decisaoAutomatica",automatic && !admission.manualOnly(),"regras",AiAdmissionBO.RULES,"suspenso",jdbc.queryForObject("SELECT ST_SUSPENSO FROM AI_CONTROL WHERE ID_CONTROL = 1",Integer.class)==1,
                 "consumoOuReservaDiaMicrosUSD",usage.dayMicros(),"limiteDiaMicrosUSD",properties.dailyMicros(),
                 "consumoOuReservaMesMicrosUSD",usage.monthMicros(),"limiteMesMicrosUSD",properties.monthlyMicros(),
                 "reservasIncertas",usage.uncertain());
