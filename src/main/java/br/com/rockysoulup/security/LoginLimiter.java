@@ -8,6 +8,7 @@ import java.time.Clock;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.HexFormat;
+import java.util.Map;
 
 @Service
 public class LoginLimiter {
@@ -17,12 +18,19 @@ public class LoginLimiter {
     @Transactional(propagation=Propagation.REQUIRES_NEW)
     public boolean consume(String email, String remoteAddress) {
         long window = clock.instant().getEpochSecond() / 900;
-        jdbc.update("DELETE FROM AUTH_LOGIN_ATTEMPT WHERE NR_WINDOW < ?", window - 1);
-        int account = hit("email:" + email,window);
-        int address = hit("ip:" + remoteAddress,window);
-        return account <= 10 && address <= 50;
+        String account = hit("email:" + email,window);
+        String address = hit("ip:" + remoteAddress,window);
+        // Both counters remain locked until commit; one read preserves the same limits.
+        var counts=jdbc.query("SELECT DS_KEY, NR_ATTEMPTS FROM AUTH_LOGIN_ATTEMPT WHERE DS_KEY IN (?,?)",
+                (rs,row)->Map.entry(rs.getString(1),rs.getInt(2)),account,address);
+        return counts.size()==2 && counts.stream().allMatch(entry->entry.getValue()<=(entry.getKey().equals(account)?10:50));
     }
-    private int hit(String subject, long window) {
+    @org.springframework.scheduling.annotation.Scheduled(initialDelay=900000,fixedDelay=900000)
+    public void prune() {
+        try { jdbc.update("DELETE FROM AUTH_LOGIN_ATTEMPT WHERE NR_WINDOW < ?",clock.instant().getEpochSecond()/900-1); }
+        catch(RuntimeException e) { org.slf4j.LoggerFactory.getLogger("security.events").error("event=LOGIN_LIMIT_MAINTENANCE_UNAVAILABLE"); }
+    }
+    private String hit(String subject, long window) {
         String key;
         try { key = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest((subject + ":" + window).getBytes(StandardCharsets.UTF_8))); }
         catch (java.security.NoSuchAlgorithmException e) { throw new IllegalStateException(e); }
@@ -31,6 +39,6 @@ public class LoginLimiter {
             try { jdbc.update("INSERT INTO AUTH_LOGIN_ATTEMPT (DS_KEY, NR_WINDOW, NR_ATTEMPTS) VALUES (?, ?, 1)",key,window); }
             catch (DuplicateKeyException e) { jdbc.update("UPDATE AUTH_LOGIN_ATTEMPT SET NR_ATTEMPTS = NR_ATTEMPTS + 1 WHERE DS_KEY = ?",key); }
         }
-        return jdbc.queryForObject("SELECT NR_ATTEMPTS FROM AUTH_LOGIN_ATTEMPT WHERE DS_KEY = ?",Integer.class,key);
+        return key;
     }
 }
