@@ -35,9 +35,8 @@ public class VerificacaoDecisionBO {
     }
     public boolean withinAutomaticLimits(long user,long action,int points) {
         var day=Timestamp.from(clock.instant().atZone(ZoneOffset.UTC).toLocalDate().atStartOfDay(ZoneOffset.UTC).toInstant());
-        long count=jdbc.queryForObject("SELECT COUNT(*) FROM VERIFICACAO_CREDITO WHERE ID_USUARIO = ? AND DT_CREDITO >= ?",Long.class,user,day);
-        long earned=jdbc.queryForObject("SELECT COALESCE(SUM(NR_PONTOS),0) FROM VERIFICACAO_CREDITO WHERE ID_USUARIO = ? AND DT_CREDITO >= ?",Long.class,user,day);
-        long same=jdbc.queryForObject("SELECT COUNT(*) FROM VERIFICACAO_CREDITO c JOIN VERIFICACAO v ON v.ID_VERIFICACAO = c.ID_VERIFICACAO WHERE c.ID_USUARIO = ? AND v.ID_ACAO = ? AND c.DT_CREDITO >= ?",Long.class,user,action,day);
-        return count<3 && earned+points<=100 && same==0;
+        var totals=jdbc.queryForObject("SELECT COUNT(*), COALESCE(SUM(c.NR_PONTOS),0), COALESCE(SUM(CASE WHEN v.ID_ACAO = ? THEN 1 ELSE 0 END),0) FROM VERIFICACAO_CREDITO c JOIN VERIFICACAO v ON v.ID_VERIFICACAO = c.ID_VERIFICACAO WHERE c.ID_USUARIO = ? AND c.DT_CREDITO >= ?",
+                (rs,n)->new long[]{rs.getLong(1),rs.getLong(2),rs.getLong(3)},action,user,day);
+        return totals[0]<3 && totals[1]+points<=100 && totals[2]==0;
     }
 }
