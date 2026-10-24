@@ -409,6 +409,19 @@ class AiSecurityIntegrationTest {
         var picture=new BufferedImage(64,64,BufferedImage.TYPE_INT_RGB);picture.setRGB(63,63,0x101010);var out=new ByteArrayOutputStream();ImageIO.write(picture,"png",out);image=Base64.getEncoder().encodeToString(out.toByteArray());
         var other=submit(202,"auto_visual_other1","Parecida");assertTrue(other.possivelReuso());assertEquals("PENDENTE_REVISAO",other.estado());assertEquals(1,count("VERIFICACAO_CREDITO"));
     }
+    @Test void clearIncompatibilityRejectsEvenWithoutVisibleCodeAndCannotCreditOrRepeat() throws Exception {
+        doAnswer(call->{((Runnable)call.getArgument(1)).run();return new AiVerdict("INCOMPATIVEL","NONE",100,20,0,"gemini-3.5-flash-lite",0,false,false,"A foto mostra apenas uma mão, sem materiais ou atividade de reciclagem.");}).when(provider).evaluate(any(),any());
+        var row=submit(101,"reject_hand_test01","Reciclagem");
+        assertEquals("REJEITADA",row.estado());assertEquals(0,row.notaCompatibilidade());assertEquals(0,row.pontosCreditados());
+        assertTrue(row.feedback().contains("mão"));assertEquals(0,count("VERIFICACAO_CREDITO"));assertEquals(0,count("HISTORICO"));
+        assertEquals(20,jdbc.queryForObject("SELECT NR_PONTOS FROM USUARIO WHERE ID_USUARIO=101",Integer.class));
+        assertEquals("REJEITADA",submit(101,"reject_hand_test01","Reciclagem").estado());verify(provider,times(1)).evaluate(any(),any());
+    }
+    @Test void clearIncompatibilityOfReusedPhotoStillRejectsWithoutGrantingAnything() throws Exception {
+        automaticProvider("COMPATIVEL","TEST22");submit(101,"reuse_prior_00001","Primeira");
+        doAnswer(call->{((Runnable)call.getArgument(1)).run();return new AiVerdict("INCOMPATIVEL","NONE",100,20,0,"gemini-3.5-flash-lite",10,false,false,"Cena nítida sem relação com a ação escolhida.");}).when(provider).evaluate(any(),any());
+        var row=submit(202,"reject_reuse_0001","Outra ação");assertTrue(row.possivelReuso());assertEquals("REJEITADA",row.estado());assertEquals(0,row.pontosCreditados());assertEquals(1,count("VERIFICACAO_CREDITO"));
+    }
     @Test void incompatibleConfirmedCaptureRejectsWithoutPoints() throws Exception {
         automaticProvider("INCOMPATIVEL","TEST22");var row=submit(101,"auto_reject_test01","Outra cena");assertEquals("REJEITADA",row.estado());assertEquals(0,row.pontosCreditados());assertEquals(0,count("HISTORICO"));
     }
