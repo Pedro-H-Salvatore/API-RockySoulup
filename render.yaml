@@ -27,4 +27,4 @@ services:
       - key: AI_ENABLED
         value: true
       - key: AI_AUTO_APPROVAL_ENABLED
-        value: false
+        value: true
