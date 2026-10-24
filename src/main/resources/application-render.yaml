@@ -11,7 +11,7 @@ spring:
 app:
   ai:
     windows-trust-store: false
-    automatic-enabled: ${AI_AUTO_APPROVAL_ENABLED:false}
+    automatic-enabled: ${AI_AUTO_APPROVAL_ENABLED:true}
   security:
     issuer: ${JWT_ISSUER:${RENDER_EXTERNAL_URL}}
     require-https: true
