@@ -66,6 +66,39 @@ class SecurityIntegrationTest {
         b=token(202,0,Instant.now(),300,"https://test.invalid","security-tests");
         admin=token(303,0,Instant.now(),300,"https://test.invalid","security-tests");
     }
+    @Test void loginReturnsPublicProfileAndCapabilityWithoutExposingSecrets() throws Exception {
+        for(long user:List.of(101L,303L)) {
+            String body="{\"email\":\"user"+user+"@test.invalid\",\"senha\":\""+PASSWORD+"\"}";
+            var result=mvc.perform(post("/auth/login").contentType("application/json").content(body))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.accessToken").isString())
+                    .andExpect(jsonPath("$.usuario.id").value(user)).andExpect(jsonPath("$.usuario.pontos").value(20))
+                    .andExpect(jsonPath("$.administrador").value(user==303)).andReturn().getResponse().getContentAsString();
+            assertFalse(result.contains(HASH));assertFalse(result.contains(PASSWORD));assertFalse(result.contains("passwordHash"));
+        }
+    }
+    @Test void sessionRestorationUsesCurrentOwnerRoleAndRevocation() throws Exception {
+        mvc.perform(get("/auth/sessao")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/auth/sessao").header("Authorization",bearer(a))).andExpect(status().isOk())
+                .andExpect(jsonPath("$.usuario.id").value(101)).andExpect(jsonPath("$.administrador").value(false));
+        mvc.perform(get("/auth/sessao").header("Authorization",bearer(admin))).andExpect(status().isOk()).andExpect(jsonPath("$.administrador").value(true));
+        jdbc.update("UPDATE USUARIO SET DS_PERFIL='USER' WHERE ID_USUARIO=303");
+        mvc.perform(get("/auth/sessao").header("Authorization",bearer(admin))).andExpect(status().isOk()).andExpect(jsonPath("$.administrador").value(false));
+        jdbc.update("UPDATE USUARIO SET NR_TOKEN_VERSION=1 WHERE ID_USUARIO=101");
+        mvc.perform(get("/auth/sessao").header("Authorization",bearer(a))).andExpect(status().isUnauthorized());
+        mvc.perform(get("/auth/sessao").header("Authorization",bearer(b))).andExpect(status().isOk()).andExpect(jsonPath("$.usuario.id").value(202));
+    }
+    @Test void sharedIpLimitStillBlocksAcrossDifferentAccounts() {
+        for(int i=0;i<50;i++) assertTrue(limiter.consume("user"+i+"@test.invalid","192.0.2.10"));
+        assertFalse(limiter.consume("last@test.invalid","192.0.2.10"));
+        assertTrue(limiter.consume("unrelated@test.invalid","192.0.2.11"));
+    }
+    @Test void limiterMaintenanceDeletesOnlyExpiredWindows() {
+        long window=Instant.now().getEpochSecond()/900;
+        jdbc.update("INSERT INTO AUTH_LOGIN_ATTEMPT (DS_KEY,NR_WINDOW,NR_ATTEMPTS) VALUES ('old',?,10)",window-2);
+        jdbc.update("INSERT INTO AUTH_LOGIN_ATTEMPT (DS_KEY,NR_WINDOW,NR_ATTEMPTS) VALUES ('current',?,10)",window);
+        limiter.prune();assertEquals(0,jdbc.queryForObject("SELECT COUNT(*) FROM AUTH_LOGIN_ATTEMPT WHERE DS_KEY='old'",Integer.class));
+        assertEquals(10,jdbc.queryForObject("SELECT NR_ATTEMPTS FROM AUTH_LOGIN_ATTEMPT WHERE DS_KEY='current'",Integer.class));
+    }
     @Test void healthIsPublicAndExposesOnlyDatabaseStatus() throws Exception {
         mvc.perform(get("/health")).andExpect(status().isOk())
             .andExpect(content().json("{\"status\":\"UP\"}"));
