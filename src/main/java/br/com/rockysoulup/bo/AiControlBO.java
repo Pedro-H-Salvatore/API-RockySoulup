@@ -63,15 +63,15 @@ public class AiControlBO {
         if(success && automatic && row.response().regras().equals(AiAdmissionBO.RULES) && row.response().tentativas()==1) {
             String reason=null;
             if(row.evidence()==null) reason="EVIDENCIA_INSUFICIENTE";
-            else if(row.response().possivelReuso()) reason="CAPTURA_REPETIDA";
-            else if(!captures.matches(id,verdict.codigoVisivel())) reason="DESAFIO_NAO_CONFIRMADO";
             else if(verdict.suspeitaManipulacao()) reason="SINAL_MANIPULACAO";
             else if(verdict.evidenciaInsuficiente()) reason="EVIDENCIA_INSUFICIENTE";
             else if(verdict.parecer().equals("INCONCLUSIVO")) reason="INCONCLUSIVO";
             else if(verdict.costMicros()>properties.reservation()) reason="LIMITE_AUTO";
             else if(verdict.notaCompatibilidade()==null) reason="NOTA_INDISPONIVEL";
             else if(verdict.notaCompatibilidade()<50 && verdict.parecer().equals("INCOMPATIVEL"))
-                decisions.decide(id,false,0,"AUTO_REJECT","Compatibilidade abaixo de 50/100 e imagem incompatível; desafio confirmado.");
+                decisions.decide(id,false,0,"AUTO_REJECT","Compatibilidade abaixo de 50/100 e imagem claramente incompatível. Rejeição sem crédito; não exige confirmar o desafio.");
+            else if(row.response().possivelReuso()) reason="CAPTURA_REPETIDA";
+            else if(!captures.matches(id,verdict.codigoVisivel())) reason="DESAFIO_NAO_CONFIRMADO";
             else if(verdict.notaCompatibilidade()<=80 && verdict.notaCompatibilidade()>=50) reason="FAIXA_REVISAO";
             else if(verdict.notaCompatibilidade()>80 && verdict.parecer().equals("COMPATIVEL")) {
                 if(!decisions.withinAutomaticLimits(row.response().usuarioId(),row.response().acaoId(),row.pontos())) reason="LIMITE_AUTO";
