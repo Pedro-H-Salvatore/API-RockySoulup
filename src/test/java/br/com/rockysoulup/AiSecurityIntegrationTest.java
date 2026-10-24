@@ -35,7 +35,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @SpringBootTest(properties={"spring.datasource.url=jdbc:h2:mem:ai;MODE=Oracle;DB_CLOSE_DELAY=-1;LOCK_TIMEOUT=10000",
         "spring.sql.init.schema-locations=classpath:schema-test.sql,classpath:schema-ai.sql",
-        "app.ai.enabled=true","app.ai.automatic-enabled=true","app.ai.gemini-key=FAKE_GEMINI_TEST_ONLY",
+        "app.ai.manual-review-only=false","app.ai.enabled=true","app.ai.automatic-enabled=true","app.ai.gemini-key=FAKE_GEMINI_TEST_ONLY",
         "app.ai.user-minute=2","app.ai.ip-minute=3","app.ai.global-minute=6",
         "app.ai.user-daily=3","app.ai.global-daily=6","app.ai.daily-micros=330000",
         "app.ai.monthly-micros=440000","app.ai.user-daily-micros=220000","app.ai.pending-limit=8"})
@@ -106,6 +106,27 @@ class AiSecurityIntegrationTest {
         return json.readValue(result.getResponse().getContentAsString(),VerificacaoResponse.class);
     }
     private long count(String table) { return jdbc.queryForObject("SELECT COUNT(*) FROM "+table,Long.class); }
+    @Test void manualReviewAcceptsWhileSuspendedWithoutProviderReservationOrCredit() throws Exception {
+        org.springframework.test.util.ReflectionTestUtils.setField(admission,"manualReviewOnly",true);
+        try {
+            jdbc.update("UPDATE AI_CONTROL SET ST_SUSPENSO=1 WHERE ID_CONTROL=1");
+            var row=submit(101,"manual_review_0001","Revisão humana");
+            assertEquals("PENDENTE_REVISAO",row.estado());assertEquals("MANUAL",row.modelo());
+            assertEquals(0,row.pontosCreditados());assertEquals(0,row.tentativas());
+            assertEquals(0,count("AI_ATTEMPT"));assertEquals(0,count("VERIFICACAO_CREDITO"));
+            assertEquals(row.id(),submit(101,"manual_review_0001","Revisão humana").id());
+            assertEquals(1,count("VERIFICACAO"));verifyNoInteractions(provider,transport);
+            mvc.perform(post("/admin/verificacoes/"+row.id()+"/revisao").header("Authorization",token(303)).contentType("application/json").content(json.writeValueAsString(new RevisaoRequest(true,"Conferido manualmente",row.versao())))).andExpect(status().isOk());
+            assertEquals(1,count("VERIFICACAO_CREDITO"));
+        } finally { org.springframework.test.util.ReflectionTestUtils.setField(admission,"manualReviewOnly",false); }
+    }
+    @Test void suspensionPreventsAutomaticDecisionForAlreadyDispatchedAttempt() throws Exception {
+        var operation=admission.submit(101,"127.0.0.1","suspend_finish_001",request("Em andamento"),images.validate(image));
+        jdbc.update("UPDATE AI_CONTROL SET ST_SUSPENSO=1 WHERE ID_CONTROL=1");
+        control.finish(operation,new AiVerdict("COMPATIVEL","TEST22",100,20,0,"gemini-3.5-flash-lite",90,false,false,"Compatível"),null,1);
+        assertEquals(0,count("VERIFICACAO_CREDITO"));
+        assertEquals("PENDENTE_REVISAO",jdbc.queryForObject("SELECT DS_ESTADO FROM VERIFICACAO",String.class));
+    }
     @Test void aggregateBudgetKeepsOldUncertainReservationsAndCurrentConcurrency() throws Exception {
         var operation=admission.submit(101,"127.0.0.1","aggregate_budget01",request("Reserva"),images.validate(image));
         var old=java.sql.Timestamp.from(Instant.parse("2026-09-01T12:00:00Z"));
