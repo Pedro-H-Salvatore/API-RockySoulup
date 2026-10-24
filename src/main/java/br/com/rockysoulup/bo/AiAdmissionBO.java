@@ -15,7 +15,7 @@ import java.security.MessageDigest;
 
 @Service
 public class AiAdmissionBO {
-    public static final String RULES="sustentavel-score-v4";
+    public static final String RULES="sustentavel-score-v5";
     private final JdbcTemplate jdbc;
     private final VerificacaoDAO dao;
     private final AcaoDAO actions;
