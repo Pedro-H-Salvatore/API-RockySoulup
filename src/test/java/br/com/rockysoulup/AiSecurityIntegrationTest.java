@@ -106,6 +106,17 @@ class AiSecurityIntegrationTest {
         return json.readValue(result.getResponse().getContentAsString(),VerificacaoResponse.class);
     }
     private long count(String table) { return jdbc.queryForObject("SELECT COUNT(*) FROM "+table,Long.class); }
+    @Test void aggregateBudgetKeepsOldUncertainReservationsAndCurrentConcurrency() throws Exception {
+        var operation=admission.submit(101,"127.0.0.1","aggregate_budget01",request("Reserva"),images.validate(image));
+        var old=java.sql.Timestamp.from(Instant.parse("2026-09-01T12:00:00Z"));
+        jdbc.update("INSERT INTO AI_ATTEMPT (ID_ATTEMPT,ID_VERIFICACAO,ID_USUARIO,DT_CRIADO,DT_LEASE,NR_RESERVADO,ST_INCERTO,ST_ATIVO) VALUES (?,?,?,?,?,50000,1,0)",UUID.randomUUID().toString(),operation.row().response().id(),101,old,old);
+        jdbc.update("INSERT INTO AI_ATTEMPT (ID_ATTEMPT,ID_VERIFICACAO,ID_USUARIO,DT_CRIADO,DT_LEASE,NR_RESERVADO,NR_CUSTO,ST_INCERTO,ST_ATIVO) VALUES (?,?,?,?,?,10000,1000,0,0)",UUID.randomUUID().toString(),operation.row().response().id(),101,old,old);
+        var snapshot=admission.snapshot(Instant.parse("2026-10-15T00:00:00Z"),Instant.parse("2026-10-01T00:00:00Z"),101);
+        assertEquals(160000,snapshot.dayMicros());assertEquals(160000,snapshot.monthMicros());assertEquals(160000,snapshot.userMicros());
+        assertEquals(1,snapshot.daily());assertEquals(1,snapshot.userDaily());assertEquals(1,snapshot.active());assertEquals(1,snapshot.userActive());assertEquals(2,snapshot.uncertain());
+        var other=admission.snapshot(Instant.parse("2026-10-15T00:00:00Z"),Instant.parse("2026-10-01T00:00:00Z"),202);
+        assertEquals(0,other.userMicros());assertEquals(0,other.userActive());assertEquals(160000,other.dayMicros());
+    }
     @Test void anonymousAndForeignEvidenceAreDenied() throws Exception {
         mvc.perform(post("/verificacoes").contentType("application/json").content("{}")).andExpect(status().isUnauthorized());
         mvc.perform(get("/verificacoes")).andExpect(status().isUnauthorized());
