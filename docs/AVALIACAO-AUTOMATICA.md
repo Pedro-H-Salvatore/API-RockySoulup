@@ -50,3 +50,15 @@ em revisão. A mudança usa sustentavel-score-v5 e vale para novos envios;
 não reavalia decisões existentes. Não há migração de banco.
 O resultado do envio exibe nota e explicação no modal existente. Somente uma
 resposta APROVADA aciona o callback de missão verificada no frontend.
+
+
+### Visibilidade do resultado
+
+Nota, feedback textual do Gemini e indicadores detalhados da avaliação são
+exclusivos de administradores. A API remove esses valores para contas comuns
+no envio, na consulta individual, na listagem e na repetição idempotente.
+O usuário recebe o estado da ação e uma mensagem simples, sem o parecer da IA
+ou nota de compatibilidade. Pontos são exibidos apenas em ações aprovadas;
+pendências e rejeições não exibem zero créditos. A rejeição é anunciada como
+alerta no modal, sem alterar as faixas de decisão. Imagens ilegíveis permanecem
+para revisão; imagens claramente incompatíveis continuam sendo rejeitadas.
