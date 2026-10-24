@@ -28,8 +28,9 @@ public class AiControlBO {
     @Transactional
     public void beforeDispatch(String attempt) {
         admission.lock();
-        var suspended=jdbc.queryForObject("SELECT ST_SUSPENSO FROM AI_CONTROL WHERE ID_CONTROL = 1",Integer.class);
-        Timestamp open=jdbc.queryForObject("SELECT DT_OPEN_UNTIL FROM AI_CONTROL WHERE ID_CONTROL = 1",Timestamp.class);
+        var state=jdbc.queryForMap("SELECT ST_SUSPENSO, DT_OPEN_UNTIL FROM AI_CONTROL WHERE ID_CONTROL = 1");
+        int suspended=((Number)state.get("ST_SUSPENSO")).intValue();
+        Timestamp open=(Timestamp)state.get("DT_OPEN_UNTIL");
         if(open!=null && open.toInstant().isAfter(clock.instant())) throw new ProviderException("DISPATCH_BLOCKED");
         if(!properties.enabled() || suspended==1 || jdbc.queryForObject("SELECT COUNT(*) FROM AI_ATTEMPT WHERE ID_ATTEMPT = ? AND ST_ATIVO = 1 AND DT_LEASE > ?",Long.class,attempt,Timestamp.from(clock.instant()))!=1) throw new ProviderException("DISPATCH_BLOCKED");
     }
@@ -38,18 +39,18 @@ public class AiControlBO {
         admission.lock();
         String id=operation.row().response().id();
         var row=dao.get(id,null,true);
-        if(jdbc.queryForObject("SELECT COUNT(*) FROM AI_ATTEMPT WHERE ID_ATTEMPT = ? AND ST_ATIVO = 1",Long.class,operation.attemptId())!=1 || !row.response().estado().equals("EM_ANALISE")) return;
+        var reservations=jdbc.queryForList("SELECT NR_RESERVADO FROM AI_ATTEMPT WHERE ID_ATTEMPT = ? AND ST_ATIVO = 1",Long.class,operation.attemptId());
+        if(reservations.size()!=1 || !row.response().estado().equals("EM_ANALISE")) return;
         boolean success=verdict!=null;
         String summary=success?verdict.safeSummary():failure;
         if(!Set.of("COMPATIVEL","INCOMPATIVEL","INCONCLUSIVO","SINAL_MANIPULACAO","HTTP_FAILURE","TIMEOUT_OR_NETWORK","INTERRUPTED","INVALID_RESPONSE","INVALID_USAGE","DISPATCH_BLOCKED","RESPONSE_TOO_LARGE","DESTINATION_BLOCKED").contains(summary)) summary="INVALID_RESPONSE";
         jdbc.update("UPDATE AI_ATTEMPT SET ST_ATIVO = 0, ST_INCERTO = ?, NR_CUSTO = ?, DS_RESULTADO = ?, NR_INPUT = ?, NR_OUTPUT = ?, NR_DURATION = ? WHERE ID_ATTEMPT = ?",
                 success?0:1,success?verdict.costMicros():null,summary,success?verdict.input():0,success?verdict.output():0,Math.max(0,duration),operation.attemptId());
-        jdbc.update("UPDATE VERIFICACAO SET DS_ESTADO = 'PENDENTE_REVISAO', DS_PARECER = ?, NR_NOTA_COMPATIBILIDADE = ?, DS_FEEDBACK_IA = ?, ST_EVIDENCIA_INSUFICIENTE = ?, ST_SUSPEITA_MANIPULACAO = ?, NR_VERSAO = NR_VERSAO + 1 WHERE ID_VERIFICACAO = ?",
-                summary,success?verdict.notaCompatibilidade():null,success?verdict.feedback():null,success?(verdict.evidenciaInsuficiente()?1:0):null,success?(verdict.suspeitaManipulacao()?1:0):null,id);
+        jdbc.update("UPDATE VERIFICACAO SET DS_ESTADO = 'PENDENTE_REVISAO', DS_PARECER = ?, DS_MODELO = COALESCE(?,DS_MODELO), NR_NOTA_COMPATIBILIDADE = ?, DS_FEEDBACK_IA = ?, ST_EVIDENCIA_INSUFICIENTE = ?, ST_SUSPEITA_MANIPULACAO = ?, NR_VERSAO = NR_VERSAO + 1 WHERE ID_VERIFICACAO = ?",
+                summary,success?verdict.providerModel():null,success?verdict.notaCompatibilidade():null,success?verdict.feedback():null,success?(verdict.evidenciaInsuficiente()?1:0):null,success?(verdict.suspeitaManipulacao()?1:0):null,id);
         if(success) {
             jdbc.update("UPDATE AI_CONTROL SET NR_FAILURES = 0, DT_OPEN_UNTIL = NULL WHERE ID_CONTROL = 1");
-            jdbc.update("UPDATE VERIFICACAO SET DS_MODELO = ? WHERE ID_VERIFICACAO = ?",verdict.providerModel(),id);
-            long reserved=jdbc.queryForObject("SELECT NR_RESERVADO FROM AI_ATTEMPT WHERE ID_ATTEMPT = ?",Long.class,operation.attemptId());
+            long reserved=reservations.getFirst();
             if(verdict.costMicros()>reserved) {
                 jdbc.update("UPDATE AI_CONTROL SET ST_SUSPENSO = 1 WHERE ID_CONTROL = 1");
                 org.slf4j.LoggerFactory.getLogger("security.events").error("event=AI_COST_CEILING_EXCEEDED");
@@ -93,10 +94,11 @@ public class AiControlBO {
         Instant now=clock.instant();
         var day=now.atZone(ZoneOffset.UTC).toLocalDate().atStartOfDay(ZoneOffset.UTC).toInstant();
         var month=now.atZone(ZoneOffset.UTC).withDayOfMonth(1).toLocalDate().atStartOfDay(ZoneOffset.UTC).toInstant();
+        var usage=admission.snapshot(day,month,-1);
         return Map.of("habilitado",properties.enabled(),"decisaoAutomatica",automatic,"regras",AiAdmissionBO.RULES,"suspenso",jdbc.queryForObject("SELECT ST_SUSPENSO FROM AI_CONTROL WHERE ID_CONTROL = 1",Integer.class)==1,
-                "consumoOuReservaDiaMicrosUSD",admission.spend(day,null),"limiteDiaMicrosUSD",properties.dailyMicros(),
-                "consumoOuReservaMesMicrosUSD",admission.spend(month,null),"limiteMesMicrosUSD",properties.monthlyMicros(),
-                "reservasIncertas",jdbc.queryForObject("SELECT COUNT(*) FROM AI_ATTEMPT WHERE ST_INCERTO = 1",Long.class));
+                "consumoOuReservaDiaMicrosUSD",usage.dayMicros(),"limiteDiaMicrosUSD",properties.dailyMicros(),
+                "consumoOuReservaMesMicrosUSD",usage.monthMicros(),"limiteMesMicrosUSD",properties.monthlyMicros(),
+                "reservasIncertas",usage.uncertain());
     }
     @Transactional
     public void maintain() {
