@@ -19,10 +19,10 @@ mantém o Oracle externo e exige V001 a V004 previamente aplicadas. Não executa
 as migrações novamente no banco já preparado. O serviço precisa alcançar o
 Oracle por sua rede de saída; firewall ou restrições do provedor podem impedir.
 
-Inicialmente AI_ENABLED=true e AI_AUTO_APPROVAL_ENABLED=false: análises reais
-ficam para revisão antes de conceder pontos. Validar o fluxo real e então ativar
-a aprovação automática conscientemente. A chave Gemini compartilhada em chat
-deve ser substituída antes de uso público. Não inserir chaves em Git/Docker.
+A partir da avaliação v4, usar AI_ENABLED=true e AI_AUTO_APPROVAL_ENABLED=true.
+Aplicar a migração V007 antes de publicar; veja AVALIACAO-AUTOMATICA.md para as
+faixas, verificações obrigatórias e revisão de casos inconclusivos. Nunca inserir
+chaves em Git/Docker. Manter a chave Gemini somente nas variáveis do serviço.
 
 CORS inicial autoriza o front local na porta 5173. Para front hospedado, adicionar
 o domínio HTTPS exato e definir VITE_API_BASE_URL no build do front com a URL
