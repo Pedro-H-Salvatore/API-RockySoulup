@@ -10,7 +10,7 @@ import java.util.*;
 
 @Repository
 public class VerificacaoDAO {
-    private static final String METADATA="SELECT ID_VERIFICACAO, ID_USUARIO, ID_ACAO, DS_ESTADO, NR_VERSAO, ST_REUSO, DS_PARECER, DS_MODELO, DS_REGRAS, NR_TENTATIVAS, NR_PONTOS_CREDITADOS, CASE WHEN BL_EVIDENCIA IS NULL THEN 0 ELSE 1 END AS ST_EVIDENCIA FROM VERIFICACAO";
+    private static final String METADATA="SELECT ID_VERIFICACAO, ID_USUARIO, ID_ACAO, DS_ESTADO, NR_VERSAO, ST_REUSO, DS_PARECER, DS_MODELO, DS_REGRAS, NR_TENTATIVAS, NR_PONTOS_CREDITADOS, NR_NOTA_COMPATIBILIDADE, DS_FEEDBACK_IA, ST_EVIDENCIA_INSUFICIENTE, ST_SUSPEITA_MANIPULACAO, CASE WHEN BL_EVIDENCIA IS NULL THEN 0 ELSE 1 END AS ST_EVIDENCIA FROM VERIFICACAO";
     private final JdbcTemplate jdbc;
     public VerificacaoDAO(JdbcTemplate jdbc) { this.jdbc=jdbc; }
     private VerificationRow map(ResultSet rs,int row) throws SQLException {
@@ -40,8 +40,10 @@ public class VerificacaoDAO {
         if(rows.isEmpty()) throw new NotFoundException(); return rows.getFirst();
     }
     private VerificacaoResponse metadata(ResultSet rs,int row) throws SQLException { return response(rs,rs.getInt("ST_EVIDENCIA")==1); }
+    private Boolean flag(ResultSet rs,String column) throws SQLException { int value=rs.getInt(column); return rs.wasNull()?null:value==1; }
     private VerificacaoResponse response(ResultSet rs,boolean evidence) throws SQLException {
         return new VerificacaoResponse(rs.getString("ID_VERIFICACAO"),rs.getLong("ID_USUARIO"),rs.getLong("ID_ACAO"),rs.getString("DS_ESTADO"),
-                rs.getLong("NR_VERSAO"),rs.getInt("ST_REUSO")==1,evidence,rs.getString("DS_PARECER"),rs.getString("DS_MODELO"),rs.getString("DS_REGRAS"),rs.getInt("NR_TENTATIVAS"),rs.getInt("NR_PONTOS_CREDITADOS"));
+                rs.getLong("NR_VERSAO"),rs.getInt("ST_REUSO")==1,evidence,rs.getString("DS_PARECER"),rs.getString("DS_MODELO"),rs.getString("DS_REGRAS"),rs.getInt("NR_TENTATIVAS"),rs.getInt("NR_PONTOS_CREDITADOS"),
+                rs.getObject("NR_NOTA_COMPATIBILIDADE",Integer.class),rs.getString("DS_FEEDBACK_IA"),flag(rs,"ST_EVIDENCIA_INSUFICIENTE"),flag(rs,"ST_SUSPEITA_MANIPULACAO"));
     }
 }
