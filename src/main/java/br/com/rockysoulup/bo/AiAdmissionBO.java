@@ -15,7 +15,7 @@ import java.security.MessageDigest;
 
 @Service
 public class AiAdmissionBO {
-    public static final String RULES="sustentavel-capture-v3";
+    public static final String RULES="sustentavel-score-v4";
     private final JdbcTemplate jdbc;
     private final VerificacaoDAO dao;
     private final AcaoDAO actions;
@@ -72,7 +72,7 @@ public class AiAdmissionBO {
         String attempt=UUID.randomUUID().toString();
         jdbc.update("INSERT INTO AI_ATTEMPT (ID_ATTEMPT,ID_VERIFICACAO,ID_USUARIO,DT_CRIADO,DT_LEASE,NR_RESERVADO) VALUES (?,?,?,?,?,?)",
                 attempt,row.response().id(),user,Timestamp.from(now),Timestamp.from(now.plusSeconds(120)),ceiling);
-        jdbc.update("UPDATE VERIFICACAO SET DS_ESTADO = 'EM_ANALISE', NR_TENTATIVAS = NR_TENTATIVAS + 1, NR_VERSAO = NR_VERSAO + 1 WHERE ID_VERIFICACAO = ?",row.response().id());
+        jdbc.update("UPDATE VERIFICACAO SET DS_ESTADO = 'EM_ANALISE', NR_TENTATIVAS = NR_TENTATIVAS + 1, NR_NOTA_COMPATIBILIDADE = NULL, DS_FEEDBACK_IA = NULL, ST_EVIDENCIA_INSUFICIENTE = NULL, ST_SUSPEITA_MANIPULACAO = NULL, NR_VERSAO = NR_VERSAO + 1 WHERE ID_VERIFICACAO = ?",row.response().id());
         if(spend(day,null)>=p.dailyMicros()*8/10) org.slf4j.LoggerFactory.getLogger("security.events").warn("event=AI_BUDGET_80_PERCENT");
         return new Admission(dao.get(row.response().id(),null,false),attempt);
     }
