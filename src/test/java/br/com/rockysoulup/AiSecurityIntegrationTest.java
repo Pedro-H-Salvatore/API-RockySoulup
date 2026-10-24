@@ -117,6 +117,24 @@ class AiSecurityIntegrationTest {
         var other=admission.snapshot(Instant.parse("2026-10-15T00:00:00Z"),Instant.parse("2026-10-01T00:00:00Z"),202);
         assertEquals(0,other.userMicros());assertEquals(0,other.userActive());assertEquals(160000,other.dayMicros());
     }
+    @Test void assessmentIsAdminOnlyAcrossSubmissionDetailListAndCachedReplay() throws Exception {
+        scoredProvider(70,"COMPATIVEL",true,false);
+        var row=submit(101,"private_feedback01","Foto escura");
+        assertEquals("PENDENTE_REVISAO",row.estado());assertNull(row.feedback());assertNull(row.notaCompatibilidade());
+        var again=submit(101,"private_feedback01","Foto escura");assertNull(again.feedback());assertNull(again.notaCompatibilidade());
+        for(String path:List.of("/verificacoes/"+row.id(),"/verificacoes?page=0&size=20")) {
+            String body=mvc.perform(get(path).header("Authorization",token(101))).andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+            assertFalse(body.contains("evidências que precisam ser conferidas"));
+            var node=json.readTree(body);if(node.isArray())node=node.get(0);
+            assertTrue(node.path("feedback").isNull());assertTrue(node.path("notaCompatibilidade").isNull());assertTrue(node.path("evidenciaInsuficiente").isNull());
+        }
+        for(String path:List.of("/verificacoes/"+row.id(),"/verificacoes?page=0&size=20")) {
+            String body=mvc.perform(get(path).header("Authorization",token(303))).andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+            var node=json.readTree(body);if(node.isArray())node=node.get(0);
+            assertEquals(70,node.path("notaCompatibilidade").asInt());assertTrue(node.path("feedback").asString().contains("evidências"));assertTrue(node.path("evidenciaInsuficiente").asBoolean());
+        }
+        assertEquals(0,count("VERIFICACAO_CREDITO"));verify(provider,times(1)).evaluate(any(),any());
+    }
     @Test void anonymousAndForeignEvidenceAreDenied() throws Exception {
         mvc.perform(post("/verificacoes").contentType("application/json").content("{}")).andExpect(status().isUnauthorized());
         mvc.perform(get("/verificacoes")).andExpect(status().isUnauthorized());
@@ -330,11 +348,11 @@ class AiSecurityIntegrationTest {
     void exactScoreBoundariesPersistFeedbackAndCreditOnlyApprovals(int score,String verdict,String state) throws Exception {
         scoredProvider(score,verdict,false,false);
         var row=submit(101,"score_boundary_001","Foto de reciclagem");
-        assertEquals(state,row.estado());assertEquals(score,row.notaCompatibilidade());assertNotNull(row.feedback());
+        assertEquals(state,row.estado());assertNull(row.notaCompatibilidade());assertNull(row.feedback());
         assertEquals(state.equals("APROVADA")?10:0,row.pontosCreditados());assertEquals(state.equals("APROVADA")?1:0,count("VERIFICACAO_CREDITO"));
         var detail=mvc.perform(get("/verificacoes/"+row.id()).header("Authorization",token(303))).andExpect(status().isOk()).andReturn();
         var saved=json.readValue(detail.getResponse().getContentAsString(),VerificacaoResponse.class);
-        assertEquals(score,saved.notaCompatibilidade());assertEquals(row.feedback(),saved.feedback());
+        assertEquals(score,saved.notaCompatibilidade());assertNotNull(saved.feedback());
         assertEquals(row.id(),submit(101,"score_boundary_001","Foto de reciclagem").id());verify(provider,times(1)).evaluate(any(),any());
     }
     @org.junit.jupiter.params.ParameterizedTest
@@ -343,7 +361,10 @@ class AiSecurityIntegrationTest {
         scoredProvider(score,score<50?"INCOMPATIVEL":"COMPATIVEL",insufficient,manipulation);
         var row=submit(101,"score_uncertain001","Imagem duvidosa");
         assertEquals("PENDENTE_REVISAO",row.estado());assertEquals(0,count("VERIFICACAO_CREDITO"));
-        assertEquals(insufficient,row.evidenciaInsuficiente());assertEquals(manipulation,row.suspeitaManipulacao());
+        assertNull(row.evidenciaInsuficiente());assertNull(row.suspeitaManipulacao());
+        var detail=mvc.perform(get("/verificacoes/"+row.id()).header("Authorization",token(303))).andExpect(status().isOk()).andReturn();
+        var adminRow=json.readValue(detail.getResponse().getContentAsString(),VerificacaoResponse.class);
+        assertEquals(insufficient,adminRow.evidenciaInsuficiente());assertEquals(manipulation,adminRow.suspeitaManipulacao());
     }
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.CsvSource({"99,INCOMPATIVEL","0,COMPATIVEL","99,INCONCLUSIVO"})
@@ -412,8 +433,8 @@ class AiSecurityIntegrationTest {
     @Test void clearIncompatibilityRejectsEvenWithoutVisibleCodeAndCannotCreditOrRepeat() throws Exception {
         doAnswer(call->{((Runnable)call.getArgument(1)).run();return new AiVerdict("INCOMPATIVEL","NONE",100,20,0,"gemini-3.5-flash-lite",0,false,false,"A foto mostra apenas uma mão, sem materiais ou atividade de reciclagem.");}).when(provider).evaluate(any(),any());
         var row=submit(101,"reject_hand_test01","Reciclagem");
-        assertEquals("REJEITADA",row.estado());assertEquals(0,row.notaCompatibilidade());assertEquals(0,row.pontosCreditados());
-        assertTrue(row.feedback().contains("mão"));assertEquals(0,count("VERIFICACAO_CREDITO"));assertEquals(0,count("HISTORICO"));
+        assertEquals("REJEITADA",row.estado());assertNull(row.notaCompatibilidade());assertEquals(0,row.pontosCreditados());
+        assertNull(row.feedback());assertEquals(0,count("VERIFICACAO_CREDITO"));assertEquals(0,count("HISTORICO"));
         assertEquals(20,jdbc.queryForObject("SELECT NR_PONTOS FROM USUARIO WHERE ID_USUARIO=101",Integer.class));
         assertEquals("REJEITADA",submit(101,"reject_hand_test01","Reciclagem").estado());verify(provider,times(1)).evaluate(any(),any());
     }
