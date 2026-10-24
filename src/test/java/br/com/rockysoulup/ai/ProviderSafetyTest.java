@@ -30,8 +30,32 @@ class ProviderSafetyTest {
     }
     private byte[] good(String text) { return response(withCode(text),100,20,0,"STOP",props.model()); }
     private String withCode(String text) {
-        try { var node=json.readTree(text); if(node.isObject() && node.size()==1 && node.has("parecer")) ((tools.jackson.databind.node.ObjectNode)node).put("codigoVisivel","NONE"); return json.writeValueAsString(node); }
+        try { var node=json.readTree(text); if(node.isObject() && node.size()==1 && node.has("parecer")) ((tools.jackson.databind.node.ObjectNode)node).put("codigoVisivel","NONE"); if(node.isObject() && node.has("parecer")) {
+            var object=(tools.jackson.databind.node.ObjectNode)node;
+            if(!node.has("notaCompatibilidade")) object.put("notaCompatibilidade",90);
+            if(!node.has("evidenciaInsuficiente")) object.put("evidenciaInsuficiente",false);
+            if(!node.has("suspeitaManipulacao")) object.put("suspeitaManipulacao",false);
+            if(!node.has("feedback")) object.put("feedback","A imagem mostra material separado para reciclagem.");
+        } return json.writeValueAsString(node); }
         catch(Exception e) { return text; }
+    }
+    @Test void scoreAndFeedbackAreParsedWithoutClaimingAuthenticity() {
+        when(http.post(any(),anyString(),any())).thenReturn(good("{\"parecer\":\"COMPATIVEL\",\"codigoVisivel\":\"TEST22\",\"notaCompatibilidade\":81,\"evidenciaInsuficiente\":false,\"suspeitaManipulacao\":true,\"feedback\":\"Há uma inconsistência visual na cena.\"}"));
+        var result=gateway.evaluate(row,()->{});
+        assertEquals(81,result.notaCompatibilidade());assertTrue(result.suspeitaManipulacao());assertFalse(result.evidenciaInsuficiente());
+        assertEquals("Há uma inconsistência visual na cena.",result.feedback());
+    }
+    @ParameterizedTest @ValueSource(strings={"-1","101","80.5","\"90\"","null","2147483648"})
+    void invalidScoresCannotProduceADecision(String value) {
+        var node=json.readTree(good("{\"parecer\":\"COMPATIVEL\"}"));
+        var part=(tools.jackson.databind.node.ObjectNode)node.path("candidates").get(0).path("content").path("parts").get(0);
+        part.put("text",part.path("text").asString().replace("\"notaCompatibilidade\":90","\"notaCompatibilidade\":"+value));
+        when(http.post(any(),anyString(),any())).thenReturn(json.writeValueAsBytes(node));
+        assertThrows(ProviderException.class,()->gateway.evaluate(row,()->{}));
+    }
+    @Test void oversizedFeedbackIsRejected() {
+        when(http.post(any(),anyString(),any())).thenReturn(good(json.writeValueAsString(Map.of("parecer","COMPATIVEL","codigoVisivel","TEST22","notaCompatibilidade",99,"feedback","x".repeat(401)))));
+        assertThrows(ProviderException.class,()->gateway.evaluate(row,()->{}));
     }
     @Test void singleFixedDestinationStructuredOutputAndUntrustedUserContent() {
         when(http.post(eq(ProviderHttp.GEMINI),anyString(),any())).thenReturn(good("{\"parecer\":\"COMPATIVEL\"}"));
