@@ -1074,3 +1074,18 @@ As notas e justificativas aparecem nos detalhes das verificações.
 Esta seção substitui a configuração inicial de hospedagem com aprovação desligada.
 Configurar `AI_AUTO_APPROVAL_ENABLED=true` e aplicar V007 antes de publicar.
 Veja [regras e implantação da avaliação automática](docs/AVALIACAO-AUTOMATICA.md).
+
+
+### Correção v5: incompatibilidade clara e resultado do envio
+
+Foto nítida de mão isolada, teclado ou cena claramente alheia à ação é
+INCOMPATIVEL, com nota abaixo de 50 e evidenciaInsuficiente=false. Imagem
+ilegível ou conteúdo impossível de julgar continua inconclusivo e em revisão.
+A rejeição por incompatibilidade clara acontece antes de verificar presença
+do código ou reutilização: não concede pontos e não precisa validar o código.
+A aprovação continua exigindo todas as verificações de desafio, reuso, segurança
+e limites. Suspeita de manipulação, falhas e evidência insuficiente continuam
+em revisão. A mudança usa sustentavel-score-v5 e vale para novos envios;
+não reavalia decisões existentes. Não há migração de banco.
+O resultado do envio exibe nota e explicação no modal existente. Somente uma
+resposta APROVADA aciona o callback de missão verificada no frontend.
