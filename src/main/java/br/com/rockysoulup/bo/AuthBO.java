@@ -51,8 +51,10 @@ public class AuthBO {
                 .claim("ver",account.tokenVersion()).build();
         String token=encoder.encode(JwtEncoderParameters.from(JwsHeader.with(MacAlgorithm.HS256).build(),claims)).getTokenValue();
         LoggerFactory.getLogger("security.events").info("event=LOGIN_SUCCEEDED actor={}",account.id());
-        return new TokenResponse(token,"Bearer",properties.tokenSeconds());
+        return new TokenResponse(token,"Bearer",properties.tokenSeconds(),account.usuario(),account.role().equals("ADMIN"));
     }
+    @Transactional(readOnly=true)
+    public SessaoResponse sessao() { access.requireAuthenticated(); return new SessaoResponse(users.findAllById(access.userId()),access.admin()); }
     @Transactional
     public void logout() { users.revoke(access.userId()); access.audit("LOGOUT_ALL_SESSIONS"); }
     private void limited(String email,String address) {
