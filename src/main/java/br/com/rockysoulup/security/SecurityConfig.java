@@ -105,6 +105,7 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.GET,"/roletas","/verificacoes/{id}/roleta").hasAnyRole("USER","ADMIN")
                 .requestMatchers(HttpMethod.POST,"/verificacoes/{id}/roleta").hasAnyRole("USER","ADMIN")
                 .requestMatchers(HttpMethod.POST,"/auth/login","/auth/cadastro").permitAll()
+                .requestMatchers(HttpMethod.GET,"/auth/sessao").hasAnyRole("USER","ADMIN")
                 .requestMatchers(HttpMethod.POST,"/auth/logout").hasAnyRole("USER","ADMIN")
                 .requestMatchers(HttpMethod.POST,"/verificacoes","/verificacoes/desafio").hasAnyRole("USER","ADMIN")
                 .requestMatchers(HttpMethod.GET,"/verificacoes","/verificacoes/{id}","/verificacoes/{id}/evidencia").hasAnyRole("USER","ADMIN")
