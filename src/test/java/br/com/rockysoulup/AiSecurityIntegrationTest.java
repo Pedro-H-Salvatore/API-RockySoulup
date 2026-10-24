@@ -35,7 +35,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @SpringBootTest(properties={"spring.datasource.url=jdbc:h2:mem:ai;MODE=Oracle;DB_CLOSE_DELAY=-1;LOCK_TIMEOUT=10000",
         "spring.sql.init.schema-locations=classpath:schema-test.sql,classpath:schema-ai.sql",
-        "app.ai.enabled=true","app.ai.gemini-key=FAKE_GEMINI_TEST_ONLY",
+        "app.ai.enabled=true","app.ai.automatic-enabled=true","app.ai.gemini-key=FAKE_GEMINI_TEST_ONLY",
         "app.ai.user-minute=2","app.ai.ip-minute=3","app.ai.global-minute=6",
         "app.ai.user-daily=3","app.ai.global-daily=6","app.ai.daily-micros=330000",
         "app.ai.monthly-micros=440000","app.ai.user-daily-micros=220000","app.ai.pending-limit=8"})
@@ -300,7 +300,7 @@ class AiSecurityIntegrationTest {
     }
 
     private void automaticProvider(String verdict,String code) {
-        doAnswer(call->{((Runnable)call.getArgument(1)).run();return new AiVerdict(verdict,code,100,20,0,"gemini-3.5-flash-lite");}).when(provider).evaluate(any(),any());
+        doAnswer(call->{((Runnable)call.getArgument(1)).run();return new AiVerdict(verdict,code,100,20,0,"gemini-3.5-flash-lite",verdict.equals("INCOMPATIVEL")?20:90,verdict.equals("INCONCLUSIVO"),false,"Avaliação visual de teste.");}).when(provider).evaluate(any(),any());
     }
     private void freshImage(int seed) throws Exception {
         var picture=new BufferedImage(96,96,BufferedImage.TYPE_INT_RGB);var random=new Random(seed);
@@ -310,6 +310,40 @@ class AiSecurityIntegrationTest {
     private DesafioResponse issue(long user,long action) throws Exception {
         var result=mvc.perform(post("/verificacoes/desafio").header("Authorization",token(user)).contentType("application/json").content("{\"acaoId\":"+action+"}")).andExpect(status().isOk()).andReturn();
         return json.readValue(result.getResponse().getContentAsString(),DesafioResponse.class);
+    }
+    private void scoredProvider(int score,String verdict,boolean insufficient,boolean manipulation) {
+        doAnswer(call->{((Runnable)call.getArgument(1)).run();return new AiVerdict(verdict,"TEST22",100,20,0,"gemini-3.5-flash-lite",score,insufficient,manipulation,"A imagem apresenta evidências que precisam ser conferidas.");}).when(provider).evaluate(any(),any());
+    }
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"0,INCOMPATIVEL,REJEITADA","49,INCOMPATIVEL,REJEITADA","50,COMPATIVEL,PENDENTE_REVISAO","80,COMPATIVEL,PENDENTE_REVISAO","81,COMPATIVEL,APROVADA","100,COMPATIVEL,APROVADA"})
+    void exactScoreBoundariesPersistFeedbackAndCreditOnlyApprovals(int score,String verdict,String state) throws Exception {
+        scoredProvider(score,verdict,false,false);
+        var row=submit(101,"score_boundary_001","Foto de reciclagem");
+        assertEquals(state,row.estado());assertEquals(score,row.notaCompatibilidade());assertNotNull(row.feedback());
+        assertEquals(state.equals("APROVADA")?10:0,row.pontosCreditados());assertEquals(state.equals("APROVADA")?1:0,count("VERIFICACAO_CREDITO"));
+        var detail=mvc.perform(get("/verificacoes/"+row.id()).header("Authorization",token(303))).andExpect(status().isOk()).andReturn();
+        var saved=json.readValue(detail.getResponse().getContentAsString(),VerificacaoResponse.class);
+        assertEquals(score,saved.notaCompatibilidade());assertEquals(row.feedback(),saved.feedback());
+        assertEquals(row.id(),submit(101,"score_boundary_001","Foto de reciclagem").id());verify(provider,times(1)).evaluate(any(),any());
+    }
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"99,true,false","99,false,true","0,true,false","0,false,true"})
+    void uncertaintyOverridesBothAutomaticApprovalAndRejection(int score,boolean insufficient,boolean manipulation) throws Exception {
+        scoredProvider(score,score<50?"INCOMPATIVEL":"COMPATIVEL",insufficient,manipulation);
+        var row=submit(101,"score_uncertain001","Imagem duvidosa");
+        assertEquals("PENDENTE_REVISAO",row.estado());assertEquals(0,count("VERIFICACAO_CREDITO"));
+        assertEquals(insufficient,row.evidenciaInsuficiente());assertEquals(manipulation,row.suspeitaManipulacao());
+    }
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"99,INCOMPATIVEL","0,COMPATIVEL","99,INCONCLUSIVO"})
+    void contradictoryVerdictsNeverAutomaticallyDecide(int score,String verdict) throws Exception {
+        scoredProvider(score,verdict,false,false);assertEquals("PENDENTE_REVISAO",submit(101,"score_conflict_001","Contradição").estado());assertEquals(0,count("VERIFICACAO_CREDITO"));
+    }
+    @Test void reprocessingClearsAnOldScoreAndFailureCannotReuseIt() throws Exception {
+        scoredProvider(70,"COMPATIVEL",false,false);var first=submit(101,"score_retry_00001","Revisão");
+        doThrow(new ProviderException("TIMEOUT_OR_NETWORK")).when(provider).evaluate(any(),any());
+        authenticate(303);var result=bo.reprocess(first.id(),first.versao(),"127.0.0.1");
+        assertEquals("PENDENTE_REVISAO",result.estado());assertNull(result.notaCompatibilidade());assertNull(result.feedback());assertEquals(0,count("VERIFICACAO_CREDITO"));
     }
     @Test void challengeRequiresSessionAndIsBoundToActionWithFiveMinuteExpiry() throws Exception {
         mvc.perform(post("/verificacoes/desafio").contentType("application/json").content("{\"acaoId\":701}")).andExpect(status().isUnauthorized());
@@ -345,7 +379,7 @@ class AiSecurityIntegrationTest {
     }
     @Test void concurrentAutomaticCompletionStillCreditsOnlyOnce() throws Exception {
         var operation=admission.submit(101,"127.0.0.1","auto_finish_race01",request("Corrida"),images.validate(image));
-        var verdict=new AiVerdict("COMPATIVEL","TEST22",100,20,0,"gemini-3.5-flash-lite");
+        var verdict=new AiVerdict("COMPATIVEL","TEST22",100,20,0,"gemini-3.5-flash-lite",90,false,false,"Captura compatível.");
         try(var pool=Executors.newFixedThreadPool(2)) {
             var one=pool.submit(()->control.finish(operation,verdict,null,1));var two=pool.submit(()->control.finish(operation,verdict,null,1));one.get(5,TimeUnit.SECONDS);two.get(5,TimeUnit.SECONDS);
         }
