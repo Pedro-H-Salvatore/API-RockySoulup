@@ -23,6 +23,9 @@ public class AiAdmissionBO {
     private final Clock clock;
     private final CapturaDAO captures;
     public AiAdmissionBO(JdbcTemplate jdbc,VerificacaoDAO dao,AcaoDAO actions,AiProperties p,Clock clock,CapturaDAO captures) { this.jdbc=jdbc; this.dao=dao; this.actions=actions; this.p=p; this.clock=clock; this.captures=captures; }
+    @org.springframework.beans.factory.annotation.Value("${app.ai.manual-review-only:true}")
+    private boolean manualReviewOnly;
+    public boolean manualOnly() { return manualReviewOnly; }
     public void lock() { jdbc.queryForObject("SELECT ID_CONTROL FROM AI_CONTROL WHERE ID_CONTROL = 1 FOR UPDATE",Integer.class); }
     @Transactional
     public Admission submit(long user,String ip,String key,VerificacaoRequest request,Evidence evidence) {
@@ -43,6 +46,10 @@ public class AiAdmissionBO {
         jdbc.update("INSERT INTO VERIFICACAO (ID_VERIFICACAO,ID_USUARIO,ID_ACAO,DS_IDEMPOTENCY,DS_FINGERPRINT,DS_HASH,DS_DESCRICAO,BL_EVIDENCIA,DT_CRIADO,NM_ACAO,NR_PONTOS,DS_MODELO,DS_REGRAS,DS_ESTADO,ST_REUSO) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'ENVIADA',?)",
                 id,user,request.acaoId(),key,fingerprint,evidence.hash(),request.descricao().strip(),evidence.jpeg(),Timestamp.from(clock.instant()),action.getNome(),action.getPontos(),p.model(),RULES,reused?1:0);
         captures.consume(request.desafioId(),user,id,evidence.visualHash(),clock.instant());
+        if(manualOnly()) {
+            jdbc.update("UPDATE VERIFICACAO SET DS_ESTADO = 'PENDENTE_REVISAO', DS_MODELO = 'MANUAL', DS_REGRAS = 'revisao-manual-v1', NR_VERSAO = NR_VERSAO + 1 WHERE ID_VERIFICACAO = ?",id);
+            return new Admission(dao.get(id,null,false),null);
+        }
         return reserve(dao.get(id,null,true),ip);
     }
     @Transactional
@@ -52,6 +59,7 @@ public class AiAdmissionBO {
         return reserve(row,ip);
     }
     private Admission reserve(VerificationRow row,String ip) {
+        if(manualOnly()) throw new AiUnavailableException();
         if(!p.enabled() || p.geminiKey()==null || p.geminiKey().isBlank()) throw new AiUnavailableException();
         Instant now=clock.instant();
         var control=jdbc.queryForMap("SELECT ST_SUSPENSO, DT_OPEN_UNTIL FROM AI_CONTROL WHERE ID_CONTROL = 1");
