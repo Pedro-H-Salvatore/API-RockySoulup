@@ -19,7 +19,11 @@ public class UsuarioDAO {
                 rs.getInt("ST_ATIVO") == 1, rs.getLong("NR_TOKEN_VERSION"));
     }
     public Optional<Account> byEmail(String email) {
-        return jdbc.query("SELECT ID_USUARIO, DS_SENHA_HASH, DS_PERFIL, ST_ATIVO, NR_TOKEN_VERSION FROM USUARIO WHERE DS_EMAIL = ?", this::account, normalize(email)).stream().findFirst();
+        return jdbc.query("SELECT ID_USUARIO, DS_SENHA_HASH, DS_PERFIL, ST_ATIVO, NR_TOKEN_VERSION, NM_USUARIO, DS_EMAIL, NR_PONTOS, NR_PONTOS_RESGATADOS, NR_VERSAO FROM USUARIO WHERE DS_EMAIL = ?", (rs,row) -> {
+            var account=account(rs,row);
+            var profile=new UsuarioResponse(account.id(),rs.getString("NM_USUARIO"),rs.getString("DS_EMAIL"),rs.getInt("NR_PONTOS"),rs.getInt("NR_PONTOS_RESGATADOS"),rs.getLong("NR_VERSAO"));
+            return new Account(account.id(),account.passwordHash(),account.role(),account.active(),account.tokenVersion(),profile);
+        }, normalize(email)).stream().findFirst();
     }
     public Optional<Account> identity(long id) {
         return jdbc.query("SELECT ID_USUARIO, DS_SENHA_HASH, DS_PERFIL, ST_ATIVO, NR_TOKEN_VERSION FROM USUARIO WHERE ID_USUARIO = ?", this::account, id).stream().findFirst();
