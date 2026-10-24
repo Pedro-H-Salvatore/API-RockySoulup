@@ -33,8 +33,9 @@ public class AiAdmissionBO {
             if(!existing.get().fingerprint().equals(fingerprint)) throw new ConflictException();
             return new Admission(existing.get(),null);
         }
-        if(jdbc.queryForObject("SELECT COUNT(*) FROM VERIFICACAO WHERE DS_ESTADO IN ('ENVIADA','EM_ANALISE','PENDENTE_REVISAO')",Long.class)>=p.pendingLimit() ||
-                jdbc.queryForObject("SELECT COUNT(*) FROM VERIFICACAO WHERE ID_USUARIO = ? AND DS_ESTADO IN ('ENVIADA','EM_ANALISE','PENDENTE_REVISAO')",Long.class,user)>=5) throw new AiLimitException();
+        var pending=jdbc.queryForObject("SELECT COUNT(*), COALESCE(SUM(CASE WHEN ID_USUARIO = ? THEN 1 ELSE 0 END),0) FROM VERIFICACAO WHERE DS_ESTADO IN ('ENVIADA','EM_ANALISE','PENDENTE_REVISAO')",
+                (rs,n)->new long[]{rs.getLong(1),rs.getLong(2)},user);
+        if(pending[0]>=p.pendingLimit() || pending[1]>=5) throw new AiLimitException();
         captures.validate(request.desafioId(),user,request.acaoId(),clock.instant());
         var action=actions.findAllById(request.acaoId(),null);
         String id=UUID.randomUUID().toString();
@@ -55,37 +56,52 @@ public class AiAdmissionBO {
         Instant now=clock.instant();
         var control=jdbc.queryForMap("SELECT ST_SUSPENSO, DT_OPEN_UNTIL FROM AI_CONTROL WHERE ID_CONTROL = 1");
         if(((Number)control.get("ST_SUSPENSO")).intValue()==1) throw new AiUnavailableException();
-        Timestamp open=jdbc.queryForObject("SELECT DT_OPEN_UNTIL FROM AI_CONTROL WHERE ID_CONTROL = 1",Timestamp.class);
+        Timestamp open=(Timestamp)control.get("DT_OPEN_UNTIL");
         if(open!=null && open.toInstant().isAfter(now)) throw new AiUnavailableException();
         long user=row.response().usuarioId();
         Instant day=now.atZone(ZoneOffset.UTC).toLocalDate().atStartOfDay(ZoneOffset.UTC).toInstant();
         Instant month=now.atZone(ZoneOffset.UTC).withDayOfMonth(1).toLocalDate().atStartOfDay(ZoneOffset.UTC).toInstant();
         long ceiling=p.reservation();
-        if(spend(day,null)+ceiling>p.dailyMicros() || spend(month,null)+ceiling>p.monthlyMicros() || spend(day,user)+ceiling>p.userDailyMicros()) throw new AiLimitException();
-        if(count("SELECT COUNT(*) FROM AI_ATTEMPT WHERE DT_CRIADO >= ?",Timestamp.from(day))>=p.globalDaily() ||
-                count("SELECT COUNT(*) FROM AI_ATTEMPT WHERE ID_USUARIO = ? AND DT_CRIADO >= ?",user,Timestamp.from(day))>=p.userDaily()) throw new AiLimitException();
-        if(count("SELECT COUNT(*) FROM AI_ATTEMPT WHERE ST_ATIVO = 1")>=p.concurrency() ||
-                count("SELECT COUNT(*) FROM AI_ATTEMPT WHERE ST_ATIVO = 1 AND ID_USUARIO = ?",user)>=1) throw new AiLimitException();
+        var usage=snapshot(day,month,user);
+        if(usage.dayMicros()+ceiling>p.dailyMicros() || usage.monthMicros()+ceiling>p.monthlyMicros() || usage.userMicros()+ceiling>p.userDailyMicros()) throw new AiLimitException();
+        if(usage.daily()>=p.globalDaily() || usage.userDaily()>=p.userDaily()) throw new AiLimitException();
+        if(usage.active()>=p.concurrency() || usage.userActive()>=1) throw new AiLimitException();
         long window=now.getEpochSecond()/60;
-        jdbc.update("DELETE FROM AI_RATE WHERE NR_WINDOW < ?",window-1);
-        hit("user:"+user,window,p.userMinute()); hit("ip:"+digest(ip),window,p.ipMinute()); hit("global",window,p.globalMinute());
+        String userKey=hit("user:"+user,window),ipKey=hit("ip:"+digest(ip),window),globalKey=hit("global",window);
+        var rates=jdbc.query("SELECT DS_KEY, NR_COUNT FROM AI_RATE WHERE DS_KEY IN (?,?,?)",(rs,n)->Map.entry(rs.getString(1),rs.getLong(2)),userKey,ipKey,globalKey);
+        if(rates.size()!=3 || rates.stream().anyMatch(entry->entry.getValue()>(entry.getKey().equals(userKey)?p.userMinute():entry.getKey().equals(ipKey)?p.ipMinute():p.globalMinute()))) throw new AiLimitException();
         String attempt=UUID.randomUUID().toString();
         jdbc.update("INSERT INTO AI_ATTEMPT (ID_ATTEMPT,ID_VERIFICACAO,ID_USUARIO,DT_CRIADO,DT_LEASE,NR_RESERVADO) VALUES (?,?,?,?,?,?)",
                 attempt,row.response().id(),user,Timestamp.from(now),Timestamp.from(now.plusSeconds(120)),ceiling);
         jdbc.update("UPDATE VERIFICACAO SET DS_ESTADO = 'EM_ANALISE', NR_TENTATIVAS = NR_TENTATIVAS + 1, NR_NOTA_COMPATIBILIDADE = NULL, DS_FEEDBACK_IA = NULL, ST_EVIDENCIA_INSUFICIENTE = NULL, ST_SUSPEITA_MANIPULACAO = NULL, NR_VERSAO = NR_VERSAO + 1 WHERE ID_VERIFICACAO = ?",row.response().id());
-        if(spend(day,null)>=p.dailyMicros()*8/10) org.slf4j.LoggerFactory.getLogger("security.events").warn("event=AI_BUDGET_80_PERCENT");
+        if(usage.dayMicros()+ceiling>=p.dailyMicros()*8/10) org.slf4j.LoggerFactory.getLogger("security.events").warn("event=AI_BUDGET_80_PERCENT");
         return new Admission(dao.get(row.response().id(),null,false),attempt);
     }
     public long spend(Instant start,Long user) {
         if(user==null) return jdbc.queryForObject("SELECT COALESCE(SUM(COALESCE(NR_CUSTO,NR_RESERVADO)),0) FROM AI_ATTEMPT WHERE DT_CRIADO >= ? OR ST_INCERTO = 1",Long.class,Timestamp.from(start));
         return jdbc.queryForObject("SELECT COALESCE(SUM(COALESCE(NR_CUSTO,NR_RESERVADO)),0) FROM AI_ATTEMPT WHERE ID_USUARIO = ? AND (DT_CRIADO >= ? OR ST_INCERTO = 1)",Long.class,user,Timestamp.from(start));
     }
-    private long count(String sql,Object... args) { return jdbc.queryForObject(sql,Long.class,args); }
-    private void hit(String subject,long window,int max) {
+    // Read all budget and concurrency counters in one statement, under the existing admission lock.
+    public record UsageSnapshot(long dayMicros,long monthMicros,long userMicros,long daily,long userDaily,long active,long userActive,long uncertain) {}
+    public UsageSnapshot snapshot(Instant day,Instant month,long user) {
+        return jdbc.queryForObject("""
+                SELECT COALESCE(SUM(CASE WHEN DT_CRIADO >= ? OR ST_INCERTO = 1 THEN COALESCE(NR_CUSTO,NR_RESERVADO) ELSE 0 END),0),
+                       COALESCE(SUM(CASE WHEN DT_CRIADO >= ? OR ST_INCERTO = 1 THEN COALESCE(NR_CUSTO,NR_RESERVADO) ELSE 0 END),0),
+                       COALESCE(SUM(CASE WHEN ID_USUARIO = ? AND (DT_CRIADO >= ? OR ST_INCERTO = 1) THEN COALESCE(NR_CUSTO,NR_RESERVADO) ELSE 0 END),0),
+                       COALESCE(SUM(CASE WHEN DT_CRIADO >= ? THEN 1 ELSE 0 END),0),
+                       COALESCE(SUM(CASE WHEN ID_USUARIO = ? AND DT_CRIADO >= ? THEN 1 ELSE 0 END),0),
+                       COALESCE(SUM(CASE WHEN ST_ATIVO = 1 THEN 1 ELSE 0 END),0),
+                       COALESCE(SUM(CASE WHEN ID_USUARIO = ? AND ST_ATIVO = 1 THEN 1 ELSE 0 END),0),
+                       COALESCE(SUM(CASE WHEN ST_INCERTO = 1 THEN 1 ELSE 0 END),0)
+                  FROM AI_ATTEMPT WHERE DT_CRIADO >= ? OR ST_INCERTO = 1 OR ST_ATIVO = 1
+                """,(rs,n)->new UsageSnapshot(rs.getLong(1),rs.getLong(2),rs.getLong(3),rs.getLong(4),rs.getLong(5),rs.getLong(6),rs.getLong(7),rs.getLong(8)),
+                Timestamp.from(day),Timestamp.from(month),user,Timestamp.from(day),Timestamp.from(day),user,Timestamp.from(day),user,Timestamp.from(month));
+    }
+    private String hit(String subject,long window) {
         String key=subject+":"+window;
         int changed=jdbc.update("UPDATE AI_RATE SET NR_COUNT = NR_COUNT + 1 WHERE DS_KEY = ?",key);
         if(changed==0) jdbc.update("INSERT INTO AI_RATE (DS_KEY,NR_WINDOW,NR_COUNT) VALUES (?,?,1)",key,window);
-        if(jdbc.queryForObject("SELECT NR_COUNT FROM AI_RATE WHERE DS_KEY = ?",Integer.class,key)>max) throw new AiLimitException();
+        return key;
     }
     public static String digest(String value) {
         try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8))); }
